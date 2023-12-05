@@ -1,12 +1,11 @@
 import argparse
-from torchvision import transforms
-from torch.utils.data import DataLoader
 
-from data_processing.visual_genome import VisualGenomeDataset
-import sys
-sys.path.append('/cmlscratch/nehamk/segment-anything')
+import torch
+from data_processing.visual_genome import VisualGenomeRelationshipWithSAMAndT5
 from segment_anything import sam_model_registry
-
+from torch.utils.data import DataLoader
+from torchvision import transforms
+from transformers import AutoTokenizer, T5EncoderModel
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--batch_size", type=int, default=256)
@@ -24,7 +23,7 @@ transform = transforms.Compose([
     transforms.ToTensor()
 ])
 
-dataset = VisualGenomeRelationshipWithSAM(root_dir='/cmlscratch/nehamk/datasets/visual_genome', sam_model=sam, t5_tokenizer=t5_tokenizer, t5_encoder=t5_model, transform=transform)
+dataset = VisualGenomeRelationshipWithSAMAndT5(root_dir='/cmlscratch/nehamk/datasets/visual_genome', sam_model=sam, t5_tokenizer=t5_tokenizer, t5_encoder=t5_model, transform=transform)
 
 dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
 

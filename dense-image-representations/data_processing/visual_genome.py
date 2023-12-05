@@ -1,17 +1,14 @@
-import torch
-from torch.utils.data import Dataset
-import re
-import pandas as pd
-from PIL import Image
-import numpy as np
 import os
-import sys
-sys.path.append('/cmlscratch/nehamk/segment-anything')
+
+import numpy as np
+import pandas as pd
+import torch
+from PIL import Image
 from segment_anything import sam_model_registry
 from segment_anything.utils.transforms import ResizeLongestSide
-
+from torch.utils.data import Dataset
 from transformers import AutoTokenizer, T5EncoderModel
-import pdb
+
 
 class VisualGenomeRelationshipWithSAMAndT5(Dataset):
     def __init__(self, root_dir, sam_model, t5_tokenizer, t5_encoder, transform=None):
