@@ -3,6 +3,7 @@ import pdb
 import os
 from PIL import Image
 import numpy as np
+import pickle
 
 import torch
 from torch.utils.data import DataLoader
@@ -97,14 +98,14 @@ def seem_visualize(image, inst_seg, seem_metadata):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--graph_emb_save_path", type=str)
+    parser.add_argument("--visual_nodes_save_path", type=str)
     parser.add_argument("--batch_size", type=int)
     parser.add_argument("--num_workers", type=int, default=16)
 
     args = parser.parse_args()
     
-    if not os.path.exists(f'{args.graph_emb_save_path}'):
-        os.makedirs(f'{args.graph_emb_save_path}')
+    if not os.path.exists(f'{args.visual_nodes_save_path}'):
+        os.makedirs(f'{args.visual_nodes_save_path}')
 
     train_transform =  transforms.Compose([
                 transforms.Resize((512, 512), interpolation=Image.BICUBIC),
@@ -148,37 +149,49 @@ if __name__ == "__main__":
         # One image at a time, Batch size = 1
         images, image_sizes, image_ids = batch
         images = images.to(device)
-        batched_inputs = [{'image': images[i], 'height': image_sizes[i][1], 'width': image_sizes[i][0]} for i in range(images.shape[0])]
+        batched_inputs = [{'image': images[j], 'height': image_sizes[j][1], 'width': image_sizes[j][0]} for j in range(images.shape[0])]
 
         with torch.no_grad():
             seem_outputs = seem_model.forward(batched_inputs)
 
         inst_seg=seem_outputs[0]['instances']
 
-        seem_visualize(image=images[0],
-                       inst_seg=inst_seg,
-                       seem_metadata=seem_metadata)
+        # visualize instance-segmented image
+        # seem_visualize(image=images[0],
+        #                inst_seg=inst_seg,
+        #                seem_metadata=seem_metadata)
         
         sel_inst_seg = inst_seg[(inst_seg.scores > 0.5).cpu()]
-        masks = BitMasks(sel_inst_seg.pred_masks > 0)
-        bboxes = masks.get_bounding_boxes()
+        
+        # Draw boxes and masks by class
+        # masks = BitMasks(sel_inst_seg.pred_masks > 0)
+        # bboxes = masks.get_bounding_boxes()
 
-        original_image = transforms.Resize(inst_seg.image_size, interpolation=Image.BICUBIC)(images[0])
-        pred_to_box = {}
-        pred_to_mask = {}
-        for b in range(bboxes.tensor.shape[0]):
-            pred_cl = sel_inst_seg.pred_classes[b].item()
-            box = bboxes[b].tensor.long().squeeze()
-            mask = masks[b].tensor.squeeze()
-            if pred_cl not in pred_to_box:
-                pred_to_box[pred_cl] = torch.zeros(original_image.shape).cuda()
-                pred_to_mask[pred_cl] = torch.zeros(original_image.shape).cuda()
+        # original_image = transforms.Resize(inst_seg.image_size, interpolation=Image.BICUBIC)(images[0])
+        # pred_to_box = {}
+        # pred_to_mask = {}
+        # for b in range(bboxes.tensor.shape[0]):
+        #     pred_cl = sel_inst_seg.pred_classes[b].item()
+        #     box = bboxes[b].tensor.long().squeeze()
+        #     mask = masks[b].tensor.squeeze()
+        #     if pred_cl not in pred_to_box:
+        #         pred_to_box[pred_cl] = torch.zeros(original_image.shape).cuda()
+        #         pred_to_mask[pred_cl] = torch.zeros(original_image.shape).cuda()
 
-            pred_to_mask[pred_cl] = torch.maximum(pred_to_mask[pred_cl], (original_image * mask.long().cuda())/255)
-            pred_to_box[pred_cl][:, box[1]: box[3], box[0]: box[2]] = original_image[:, box[1]: box[3], box[0]: box[2]]/255
+        #     pred_to_mask[pred_cl] = torch.maximum(pred_to_mask[pred_cl], (original_image * mask.long().cuda())/255)
+        #     pred_to_box[pred_cl][:, box[1]: box[3], box[0]: box[2]] = original_image[:, box[1]: box[3], box[0]: box[2]]/255
         
         
-        print([COCO_PANOPTIC_CLASSES[k] for k in pred_to_box])
-        save_image(torch.stack(list(pred_to_box.values())), 'boxes.png')
-        save_image(torch.stack(list(pred_to_mask.values())), 'masks.png')
-        pdb.set_trace()
+        # print([COCO_PANOPTIC_CLASSES[k] for k in pred_to_box])
+        # save_image(torch.stack(list(pred_to_box.values())), 'boxes.png')
+        # save_image(torch.stack(list(pred_to_mask.values())), 'masks.png')
+
+        
+        with open(f'{args.visual_nodes_save_path}/{image_ids[0].item()}.pkl', 'wb+') as f:
+            pickle.dump({
+                'pred_mask_embs': sel_inst_seg.pred_mask_embs.cpu().numpy(),
+                'pred_masks': sel_inst_seg.pred_masks.cpu().numpy(),
+                'pred_boxes': sel_inst_seg.pred_boxes.tensor.cpu().numpy(),
+                'scores': sel_inst_seg.scores.cpu().numpy(),
+                'pred_classes': sel_inst_seg.pred_classes.cpu().numpy(),
+            }, f)
