@@ -106,6 +106,13 @@ class CaptionParser:
                     "relationships": List[List[str, str, str]]
                 }
         """
+
+        def get_object_index(key: str, objects: List[str]) -> Optional[int]:
+            for i, obj in enumerate(objects):
+                if key in obj:
+                    return i
+            return None
+
         results = self.ask_llama(captions)
         outputs = []
         for result in results:
@@ -114,6 +121,15 @@ class CaptionParser:
             except json.decoder.JSONDecodeError as e:
                 decoded_result = {"objects": [], "relationships": []}
             finally:
+                indexed_relationships = []
+                for relationship in decoded_result["relationships"]:
+                    indexed_relationship = [
+                        get_object_index(relationship[0], decoded_result["objects"]),
+                        get_object_index(relationship[1], decoded_result["objects"]),
+                        relationship[2],
+                    ]
+                    indexed_relationships.append(indexed_relationship)
+                decoded_result["relationships"] = indexed_relationships
                 outputs.append(decoded_result)
         return outputs
 
