@@ -11,5 +11,5 @@
 #SBATCH --mem=32G
 
 python3 compute_graph_reps.py \
---visual_nodes_save_path coco_visual_nodes \
+--visual_nodes_save_path coco_visual_graph \
 --batch_size 1 \
