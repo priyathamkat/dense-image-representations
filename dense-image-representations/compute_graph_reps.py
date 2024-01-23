@@ -39,7 +39,7 @@ class Predictor(RamPredictor):
         self.model = RamModel(**self.config.model).to(self.device)
         if self.config.load_from is not None:
             self.model.load_state_dict(torch.load(self.config.load_from, map_location=self.device), strict=False)
-        self.model.train()
+        self.model.eval()
 
 
 class CocoImages(CocoDetection):
@@ -102,7 +102,6 @@ def load_seem_model():
 def load_ram_model(device):
     sam = build_sam(checkpoint='sam_vit_h_4b8939.pth').to(device)
     sam_predictor = SamPredictor(sam)
-    sam_mask_generator = SamAutomaticMaskGenerator(sam)
 
     # load ram model
     model_path = 'epoch_12.pth'
@@ -143,21 +142,22 @@ def get_ram_relationship(bbox1, bbox2, sam_predictor, ram_predictor):
     '''
     Provided two bounding boxes, return the relationship index and score
     '''
-    mask1, score1, logit1, feat1 = sam_predictor.predict(
-        # mask_input = masks[2].tensor,
-        box = bbox1.tensor.cpu().numpy(),
-        multimask_output = False
-    )
+    with torch.no_grad():
+        mask1, score1, logit1, feat1 = sam_predictor.predict(
+            # mask_input = masks[2].tensor,
+            box = bbox1.tensor.cpu().numpy(),
+            multimask_output = False
+        )
 
-    mask2, score2, logit2, feat2 = sam_predictor.predict(
-        # mask_input = masks[2].tensor,
-        box = bbox2.tensor.cpu().numpy(),
-        multimask_output = False
-    )
+        mask2, score2, logit2, feat2 = sam_predictor.predict(
+            # mask_input = masks[2].tensor,
+            box = bbox2.tensor.cpu().numpy(),
+            multimask_output = False
+        )
 
-    feat = torch.cat((feat1, feat2), dim=1)
-    matrix_output, rel_triplets = ram_predictor.predict(feat)
-    
+        feat = torch.cat((feat1, feat2), dim=1)
+        matrix_output, rel_triplets = ram_predictor.predict(feat)
+        
     subject_output = matrix_output.permute([0,2,3,1])[:,0,1:]
     
     output = subject_output[:,0]
@@ -233,15 +233,21 @@ if __name__ == '__main__':
         inst_seg=seem_outputs[0]['instances']
 
         # visualize instance-segmented image
+        '''
         seem_visualize(image=images[0],
                        inst_seg=inst_seg,
                        seem_metadata=seem_metadata)
+        '''
 
         sel_inst_seg = inst_seg[(inst_seg.scores > 0.5).cpu()]
         
         masks = BitMasks(sel_inst_seg.pred_masks > 0)
         bboxes = masks.get_bounding_boxes()
-        original_image = np.asarray(transforms.ToPILImage()(transforms.Resize(inst_seg.image_size, interpolation=Image.BICUBIC)(images[0])))
+        pil_resize_transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize(inst_seg.image_size, interpolation=Image.BICUBIC),
+        ])
+        original_image = np.asarray(pil_resize_transform(images[0]))
         # Draw boxes and masks by class
         '''
         original_image = transforms.Resize(inst_seg.image_size, interpolation=Image.BICUBIC)(images[0])
@@ -266,7 +272,7 @@ if __name__ == '__main__':
         
         # np.save(f'{args.visual_nodes_save_path}/{image_ids[0].item()}_pred_mask_embs.npy', sel_inst_seg.pred_mask_embs.cpu().numpy())
         # np.save(f'{args.visual_nodes_save_path}/{image_ids[0].item()}_pred_masks.npy', sel_inst_seg.pred_masks.cpu().numpy())
-        np.save(f'{args.visual_nodes_save_path}/{image_ids[0].item()}_pred_classes.npy', sel_inst_seg.pred_classes.cpu().numpy())
+        # np.save(f'{args.visual_nodes_save_path}/{image_ids[0].item()}_pred_classes.npy', sel_inst_seg.pred_classes.cpu().numpy())
 
         # Extract relationships in the format [[source_node_index, target_node_index], [source_node_index, target_node_index], ...]
         sam_predictor.set_image(original_image)
@@ -274,13 +280,20 @@ if __name__ == '__main__':
         edge_attr = []
         for b1 in range(bboxes.tensor.shape[0]):
             for b2 in range(bboxes.tensor.shape[0]):
+                if b1 == b2:
+                    continue
                 relation, score = get_ram_relationship(bboxes[b1], bboxes[b2], sam_predictor, ram_predictor)
                 if score > 0.01:
                     edge_index.append([b1, b2])
                     edge_attr.append(relation)
 
         graph_data = Data(x = sel_inst_seg.pred_mask_embs.cpu(),
+                          node_attr = sel_inst_seg.pred_classes.cpu(),
                           edge_index = torch.tensor(edge_index).t(),
                           edge_attr = torch.tensor(edge_attr))
 
         torch.save(graph_data, f'{args.visual_nodes_save_path}/{image_ids[0].item()}_graph.pt')
+
+        # print([COCO_PANOPTIC_CLASSES[i] for i in graph_data.node_attr])
+        # print([relation_classes[i] for i in graph_data.edge_attr])
+        # print(graph_data.edge_index)
