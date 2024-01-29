@@ -88,6 +88,3 @@ if __name__ == '__main__':
         graph_data = graph_constructor(original_image, inst_seg)
 
         torch.save(graph_data, f'{args.visual_graphs_save_path}/{image_ids[0].item()}_graph.pt')
-        # print([COCO_PANOPTIC_CLASSES[i] for i in graph_data.node_attr])
-        # print([relation_classes[i] for i in graph_data.edge_attr])
-        # print(graph_data.edge_index)
