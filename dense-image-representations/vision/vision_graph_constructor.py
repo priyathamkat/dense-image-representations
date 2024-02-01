@@ -1,21 +1,18 @@
 import os 
 import torch
 import numpy as np
-from PIL import Image
-import matplotlib.pyplot as plt 
+from PIL import Image 
 
 from torch_geometric.data import Data
-from torch_geometric.utils import to_networkx
-import networkx as nx
 
-from seem_module.utils.constants import COCO_PANOPTIC_CLASSES
+from .seem_module.utils.constants import COCO_PANOPTIC_CLASSES
 
-from relate_anything.segment_anything import build_sam, SamPredictor, SamAutomaticMaskGenerator
-from relate_anything.utils import relation_classes
-from relate_anything.ram_train_eval import RamModel, RamPredictor
+from .relate_anything.segment_anything import build_sam, SamPredictor, SamAutomaticMaskGenerator
+from .relate_anything.utils import relation_classes
+from .relate_anything.ram_train_eval import RamModel, RamPredictor
 from mmengine.config import Config
 
-from image_segmentor import ImageSegmentor
+from .image_segmentor import ImageSegmentor
 
 from transformers import AutoTokenizer, T5EncoderModel
 
@@ -114,36 +111,27 @@ class VisionGraphConstructor:
                     edge_index.append([b1, b2])
                     edge_attr.append(relation)
         
-        node_classes = [COCO_PANOPTIC_CLASSES[c.item()] for c in inst_seg.pred_classes.cpu()]
+        node_classes = [COCO_PANOPTIC_CLASSES[c.item()].split('-')[0] for c in inst_seg.pred_classes.cpu()]
         edge_classes = [relation_classes[c.item()] for c in edge_attr]
 
-        graph_data = Data(x = inst_seg.pred_mask_embs.cpu(),
-                        node_attr = self.encode_with_lm(node_classes),
+        graph_data = Data(x = inst_seg.pred_mask_embs.detach().cpu(),
+                        node_attr = self.encode_with_lm(node_classes).detach().cpu(),
                         node_names = node_classes,
                         edge_index = torch.tensor(edge_index).t(),
-                        edge_attr = self.encode_with_lm(edge_classes),
+                        edge_attr = self.encode_with_lm(edge_classes).detach().cpu(),
                         edge_names = edge_classes)
 
         return graph_data
 
     def encode_with_lm(self, texts):
         """Accepts a list of texts and returns a list of encoded texts."""
-        inputs = self.tokenizer(texts, return_tensors="pt", padding=True).input_ids
-        inputs = inputs.cuda()
-        outputs = self.t5_model(inputs).last_hidden_state
-        return outputs.mean(dim=1)
-
-    def visualize_graph(self, graph_obj):
-        node_names = dict([(i, graph_obj.node_names[i]) for i in range(len(graph_obj.node_attr))])
-        edge_names = dict([(tuple(graph_obj.edge_index.T[i].numpy()), graph_obj.edge_names[i]) for i in range(len(graph_obj.edge_attr))])
-        print(edge_names)
-
-        # Draw and save graph
-        nx_graph = to_networkx(graph_obj)
-        pos = nx.circular_layout(nx_graph)
-        nx.draw(nx_graph, pos, labels = node_names, with_labels = True)
-        nx.draw_networkx_edge_labels(nx_graph, pos, edge_labels = edge_names, font_size = 8)
-        plt.savefig('graph.png', format='PNG')
+        if len(texts) > 0:
+            inputs = self.tokenizer(texts, return_tensors="pt", padding=True).input_ids
+            inputs = inputs.cuda()
+            outputs = self.t5_model(inputs).last_hidden_state
+            return outputs.mean(dim=1)
+        else:
+            return torch.Tensor([])
 
 
 if __name__ == '__main__':
@@ -155,7 +143,5 @@ if __name__ == '__main__':
 
     graph_constructor = VisionGraphConstructor(pretrained_ram_model_path='../pretrained_checkpoints')
     graph_obj = graph_constructor(pil_image, inst_seg)
-    pdb.set_trace()
-    graph_constructor.visualize_graph(graph_obj)
 
     

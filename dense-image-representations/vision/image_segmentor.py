@@ -8,12 +8,12 @@ from detectron2.utils.colormap import random_color
 from detectron2.data import MetadataCatalog
 from detectron2.structures import BitMasks
 
-from seem_module.modeling.BaseModel import BaseModel
-from seem_module.modeling import build_model
-from seem_module.utils.arguments import load_opt_from_config_files
-from seem_module.utils.constants import COCO_PANOPTIC_CLASSES
-from seem_module.utils.distributed import init_distributed
-from seem_module.utils.visualizer import Visualizer
+from .seem_module.modeling.BaseModel import BaseModel
+from .seem_module.modeling import build_model
+from .seem_module.utils.arguments import load_opt_from_config_files
+from .seem_module.utils.constants import COCO_PANOPTIC_CLASSES
+from .seem_module.utils.distributed import init_distributed
+from .seem_module.utils.visualizer import Visualizer
 
 
 class ImageSegmentor:

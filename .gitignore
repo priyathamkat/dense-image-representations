@@ -160,5 +160,7 @@ cython_debug/
 #.idea/
 
 
-coco_visual_nodes/
+text/llama
 coco_visual_graph/
+coco_parsed_captions/
+graph_vis/
