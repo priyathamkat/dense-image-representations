@@ -5,8 +5,8 @@ from PIL import Image
 import numpy as np
 
 from detectron2.utils.colormap import random_color
-from detectron2.data import MetadataCatalog
 from detectron2.structures import BitMasks
+from detectron2.data import MetadataCatalog
 
 from .seem_module.modeling.BaseModel import BaseModel
 from .seem_module.modeling import build_model
@@ -15,14 +15,18 @@ from .seem_module.utils.constants import COCO_PANOPTIC_CLASSES
 from .seem_module.utils.distributed import init_distributed
 from .seem_module.utils.visualizer import Visualizer
 
+import pdb
 
 class ImageSegmentor:
     def __init__(self, pretrained_model_path='', seem_config='seem_module/configs/seem/focall_unicl_lang_demo.yaml', device='cuda'):
         self.seem_config = seem_config
-        seem_model, self.seem_metadata = self.load_seem_model(pretrained_model_path)
+        seem_model = self.load_seem_model(pretrained_model_path)
         self.device = device
         self.seem_model = seem_model.to(device)
+        self.seem_metadata = self.get_metadata()
+
         self.seem_model.eval()
+
         self.resize_pil_to_tensor = transforms.Compose([
             transforms.Resize((512, 512), interpolation=Image.BICUBIC),
             transforms.PILToTensor()])
@@ -51,22 +55,28 @@ class ImageSegmentor:
         build model
         '''
         model = BaseModel(opt, build_model(opt)).from_pretrained(pretrained_pth).eval().cuda()
+        return model
+
+    def get_metadata(self, class_list = [], include_coco_classes=True):        
+        if include_coco_classes:
+            class_list += COCO_PANOPTIC_CLASSES
+
         with torch.no_grad():
-            thing_colors = [random_color(rgb=True, maximum=255).astype(np.int32).tolist() for _ in range(len(COCO_PANOPTIC_CLASSES))]
-            thing_dataset_id_to_contiguous_id = {x:x for x in range(len(COCO_PANOPTIC_CLASSES))}
-            
-            MetadataCatalog.get('demo').set(
-                thing_colors=thing_colors,
-                thing_classes=COCO_PANOPTIC_CLASSES,
+            thing_dataset_id_to_contiguous_id = {x:x for x in range(len(class_list))}
+
+            if 'demo' in MetadataCatalog:
+                MetadataCatalog.remove('demo')
+            metadata = MetadataCatalog.get('demo')
+            metadata.set(
+                thing_classes=class_list,
                 thing_dataset_id_to_contiguous_id=thing_dataset_id_to_contiguous_id,
             )
-            # model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(COCO_PANOPTIC_CLASSES + ['background'], is_eval=False)
-            model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(COCO_PANOPTIC_CLASSES + ['background'], is_eval=True)
-            metadata = MetadataCatalog.get('demo')
-            model.model.metadata = metadata
-            model.model.sem_seg_head.num_classes = len(COCO_PANOPTIC_CLASSES)
 
-        return model, metadata
+            self.seem_model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(class_list + ["background"], is_eval=True)
+            self.seem_model.model.metadata = metadata
+            self.seem_model.model.sem_seg_head.num_classes = len(class_list)
+
+        return metadata
 
     def segment(self, pil_image):
         """Accepts a pil image and returns the detection Instances using SEEM. """
@@ -74,7 +84,7 @@ class ImageSegmentor:
         image = self.resize_pil_to_tensor(pil_image).to(self.device)
         return self.__call__(image, pil_image.size)
 
-    def __call__(self, image, image_size):
+    def __call__(self, image, image_size, use_highest_scoring_masks_only = False):
         """Accepts a tensor (512x512) image and returns the detection Instances using SEEM.
 
         Args:
@@ -88,8 +98,13 @@ class ImageSegmentor:
             seem_outputs = self.seem_model.forward(batched_inputs)
         
         inst_seg = seem_outputs[0]['instances']
-        
+
         sel_inst_seg = inst_seg[(inst_seg.scores > 0.5).cpu()]
+        if use_highest_scoring_masks_only:
+            sorted_idx = sel_inst_seg.scores.sort(descending = True).indices
+            select_inst_idx = [sorted_idx[torch.where(sel_inst_seg.pred_classes[sorted_idx] == c)[0][0]] for c in sel_inst_seg.pred_classes.unique()]    
+            sel_inst_seg = sel_inst_seg[torch.LongTensor(select_inst_idx)]
+            
         
         sel_inst_seg.pred_masks = sel_inst_seg.pred_masks.cpu()
         sel_inst_seg.pred_boxes = BitMasks(sel_inst_seg.pred_masks > 0).get_bounding_boxes()

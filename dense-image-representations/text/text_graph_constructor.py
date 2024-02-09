@@ -27,10 +27,13 @@ class TextGraphConstructor:
         """
         nodes = self.encode_with_lm(parsed_caption["objects"])
         relationships = parsed_caption["relationships"]
-        edge_names = list(map(lambda x: x[2], relationships))
         edge_index = torch.tensor(list(map(lambda x: x[:2], relationships))).T
-        edge_attr = self.encode_with_lm(list(map(lambda x: x[2], relationships)))
-        graph = GraphData(x=nodes, edge_index=edge_index, edge_attr=edge_attr, edge_names=edge_names, node_names=parsed_caption['objects'])
+        if len(relationships) > 0:
+            edge_names = list(map(lambda x: x[2], relationships))
+            edge_attr = self.encode_with_lm(list(map(lambda x: x[2], relationships)))
+            graph = GraphData(x=nodes, edge_index=edge_index, edge_attr=edge_attr, edge_names=edge_names, node_names=parsed_caption['objects'])
+        else:
+            graph = GraphData(x=nodes, edge_index=edge_index, node_names=parsed_caption['objects'])
         return graph
 
 

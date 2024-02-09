@@ -161,6 +161,6 @@ cython_debug/
 
 
 text/llama
-coco_visual_graph/
-coco_parsed_captions/
-graph_vis/
+*_visual_graph/
+*_parsed_captions/
+*_graph_vis/
