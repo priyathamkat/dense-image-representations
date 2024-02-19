@@ -5,8 +5,8 @@ from transformers import AutoTokenizer, T5EncoderModel
 
 class TextGraphConstructor:
     def __init__(self) -> None:
-        self.tokenizer = AutoTokenizer.from_pretrained("t5-small")
-        self.model = T5EncoderModel.from_pretrained("t5-small")
+        self.tokenizer = AutoTokenizer.from_pretrained("t5-base")
+        self.model = T5EncoderModel.from_pretrained("t5-base")
         self.model.to("cuda")
 
     def encode_with_lm(self, texts):

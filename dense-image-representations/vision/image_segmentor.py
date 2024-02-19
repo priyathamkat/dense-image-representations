@@ -57,7 +57,7 @@ class ImageSegmentor:
         model = BaseModel(opt, build_model(opt)).from_pretrained(pretrained_pth).eval().cuda()
         return model
 
-    def get_metadata(self, class_list = [], include_coco_classes=True):        
+    def get_metadata(self, class_list = [], include_coco_classes=True):    
         if include_coco_classes:
             class_list += COCO_PANOPTIC_CLASSES
 
@@ -75,7 +75,6 @@ class ImageSegmentor:
             self.seem_model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(class_list + ["background"], is_eval=True)
             self.seem_model.model.metadata = metadata
             self.seem_model.model.sem_seg_head.num_classes = len(class_list)
-
         return metadata
 
     def segment(self, pil_image):
@@ -111,13 +110,13 @@ class ImageSegmentor:
 
         return sel_inst_seg
 
-    def visualize_segmented_image(self, pil_image, inst_seg):
+    def visualize_segmented_image(self, pil_image, inst_seg, save_path = 'inst.png'):
         """Visualizes the instance segmentation on the current image and saves it as inst.png."""
 
         visual = Visualizer(np.asarray(pil_image), metadata=self.seem_metadata)
         demo = visual.draw_instance_predictions(inst_seg) # rgb Image
 
-        demo.save('inst.png')
+        demo.save(save_path)
 
         # pred_to_box = {}
         # pred_to_mask = {}
