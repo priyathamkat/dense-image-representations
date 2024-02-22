@@ -136,7 +136,6 @@ class TagMatcher:
                 }
         """
 
-
         results = self.ask_llama(tags_lists_1, tags_lists_2)
         outputs = [{}] * len(results)
         for i, result in enumerate(results):
