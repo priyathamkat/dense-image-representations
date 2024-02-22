@@ -26,6 +26,7 @@ flags.DEFINE_string(
 class CaptionParser:
     def __init__(
         self,
+        chunk_noun_phrases: bool = False,
         max_seq_len: int = 1024,
         max_batch_size: int = 8,
     ):
@@ -35,6 +36,7 @@ class CaptionParser:
             max_seq_len=max_seq_len,
             max_batch_size=max_batch_size,
         )
+        self.chunk_noun_phrases = chunk_noun_phrases
 
     def ask_llama(
         self, captions: List[str], temperature=0.6, top_p=0.9, max_gen_len=None
@@ -51,85 +53,145 @@ class CaptionParser:
             max_gen_len (int, optional): The maximum length of generated sequences. If None, it will be
                 set to the model's max sequence length. Defaults to None.
         """
-        dialogs: List[Dialog] = list(
-            [
-                {
-                    "role": "system",
-                    "content": """You are a helpful assistant who is designed to parse sentences.
-                Given a sentence, your first task is to identify all the nouns and noun phrases in the sentence. These are the objects.
-                The second task is to qualify all objects with the corresponding attributes available in the sentence. These are generally adjectives that describe them.
-                The final task is to extract relationships in the sentence. These are generally verbs and prepositions in the sentence that describe the action or interaction between the identified objects.
-                """,
-                },
-                {
-                    "role": "user",
-                    "content": f"""In the following sentence:
-                    a tennis player in all white swinging at the ball
-                list the objects (nouns) with their attributes (adjectives) and relationships (verbs, prepositions) between them.
-                Output should be in JSON format with fields 'objects', 'relationships'
-                Each relationship is a list of the form [subject, object, predicate]
-                such that the subject is performing the action described by the predicate on the object.""",
-                },
-                {
-                    "role": "assistant",
-                    "content": """
+        if self.chunk_noun_phrases:
+            dialogs: List[Dialog] = list(
+                [
                     {
-                        "objects":["tennis player in all white", "ball"],
-                        "relationships":[["tennis player", "ball", "swinging at"]]
-                    }
-                """,
-                },
-                {
-                    "role": "user",
-                    "content": f"""A young man wearing black attire and a flowered tie is standing and smiling.""",
-                },
-                {
-                    "role": "assistant",
-                    "content": """
+                        "role": "system",
+                        "content": """You are a helpful assistant who is designed to parse sentences. You will be provided a prompt and a list of noun phrases in the prompt.
+                    Your task is to output noun phrases (including any attributes/adjectives) and the relationships between said noun phrases as mentioned in the prompt.
+                    Output should be in JSON format with fields 'noun phrases', 'relationships'. Each relationship is a list of the form [subject, object, predicate].
+
+                    Make sure to not include relationships with a "None" object.
+
+                    Example:
+
+                    Input prompt: a tennis player in all white swinging at the ball
+                    Input noun phrases: ["a tennis player", "the ball"]
+
+                    Output: 
+                        {
+                            "objects":["tennis player in all white", "ball"],
+                            "relationships":[["tennis player", "ball", "swinging at"]]
+                        }""",
+                    },
+                    {
+                        "role": "user",
+                        "content": """A young man wearing black attire and a flowered tie is standing and smiling.
+                    [young man", "black attire", "flowered tie]""",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": """
                     {
                         "objects":["young man", "black attire", "flowered tie"],
                         "relationships":[["young man", "black attire", "wearing"], ["young man", "flowered tie", "wearing"]]
                     }
                 """,
-                },
-                {
-                    "role": "user",
-                    "content": f"""In the following sentence:
-                    three people sit at a table holding lollipops
-                The word people is qualified with the number 'three'. Therefore, this should be split into three separate objects.""",
-                },
-                {
-                    "role": "assistant",
-                    "content": """
+                    },
                     {
-                        "objects":["person-1", "person-2", "person-3", "lollipops", "table"],
-                        "relationships":[["person-1", "table", "sit"], ["person-2", "table", "sit"], ["person-3", "table", "sit"], 
-                        ["person-1", "lollipop", "holding"], ["person-2", "lollipop", "holding"], ["person-3", "lollipop", "holding"]]
-                    }
-                """,
-                },
-                {
-                    "role": "user",
-                    "content": f"""the person without earrings pays the person with earrings""",
-                },
-                {
-                    "role": "assistant",
-                    "content": """
+                        "role": "user",
+                        "content": """the person without earrings pays the person with earrings
+                    [the person, earrings, the person, earrings]""",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": """
                     {
                         "objects":["person without earrings", "person with earrings"],
                         "relationships":[["person without earrings", "person with earrings", "pays"]]
                     }
                 """,
-                },
-                {
-                    "role": "user",
-                    "content": f"""Parse the following sentence:
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""Parse the following sentence:
                     {caption}
                 and output just a single JSON object in the same format as above without any explanation.""",
-                },
-            ]
-            for caption in captions
-        )
+                    },
+                ]
+                for caption in captions
+            )
+        else:
+            dialogs: List[Dialog] = list(
+                [
+                    {
+                        "role": "system",
+                        "content": """You are a helpful assistant who is designed to parse sentences.
+                    Given a sentence, your first task is to identify all the nouns and noun phrases in the sentence. These are the objects.
+                    The second task is to qualify all objects with the corresponding attributes available in the sentence. These are generally adjectives that describe them.
+                    The final task is to extract relationships in the sentence. These are generally verbs and prepositions in the sentence that describe the action or interaction between the identified objects.
+                    """,
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""In the following sentence:
+                        a tennis player in all white swinging at the ball
+                    list the objects (nouns) with their attributes (adjectives) and relationships (verbs, prepositions) between them.
+                    Output should be in JSON format with fields 'objects', 'relationships'
+                    Each relationship is a list of the form [subject, object, predicate]
+                    such that the subject is performing the action described by the predicate on the object.""",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": """
+                        {
+                            "objects":["tennis player in all white", "ball"],
+                            "relationships":[["tennis player", "ball", "swinging at"]]
+                        }
+                    """,
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""A young man wearing black attire and a flowered tie is standing and smiling.""",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": """
+                        {
+                            "objects":["young man", "black attire", "flowered tie"],
+                            "relationships":[["young man", "black attire", "wearing"], ["young man", "flowered tie", "wearing"]]
+                        }
+                    """,
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""In the following sentence:
+                        three people sit at a table holding lollipops
+                    The word people is qualified with the number 'three'. Therefore, this should be split into three separate objects.""",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": """
+                        {
+                            "objects":["person-1", "person-2", "person-3", "lollipops", "table"],
+                            "relationships":[["person-1", "table", "sit"], ["person-2", "table", "sit"], ["person-3", "table", "sit"], 
+                            ["person-1", "lollipop", "holding"], ["person-2", "lollipop", "holding"], ["person-3", "lollipop", "holding"]]
+                        }
+                    """,
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""the person without earrings pays the person with earrings""",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": """
+                        {
+                            "objects":["person without earrings", "person with earrings"],
+                            "relationships":[["person without earrings", "person with earrings", "pays"]]
+                        }
+                    """,
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""Parse the following sentence:
+                        {caption}
+                    and output just a single JSON object in the same format as above without any explanation.""",
+                    },
+                ]
+                for caption in captions
+            )
 
         results = self.generator.chat_completion(
             dialogs,  # type: ignore
@@ -162,6 +224,14 @@ class CaptionParser:
                     return i
             return None
 
+        if self.chunk_noun_phrases:
+            chunked_captions = []
+            for caption in captions:
+                doc = self.nlp(caption)
+                chunks = [chunk.text for chunk in doc.noun_chunks]
+                chunked_captions.append(f"{caption}\n{chunks}")
+            captions = chunked_captions
+
         results = self.ask_llama(captions)
         outputs = []
         for result in results:
@@ -174,8 +244,12 @@ class CaptionParser:
                 for relationship in decoded_result["relationships"]:
                     if len(relationship) == 3 and None not in relationship:
                         indexed_relationship = [
-                            get_object_index(relationship[0], decoded_result["objects"]),
-                            get_object_index(relationship[1], decoded_result["objects"]),
+                            get_object_index(
+                                relationship[0], decoded_result["objects"]
+                            ),
+                            get_object_index(
+                                relationship[1], decoded_result["objects"]
+                            ),
                             relationship[2],
                         ]
                         if None not in indexed_relationship:
@@ -231,6 +305,7 @@ def main(_):
     #     with open(f'{save_path}/{i}_1.json', 'w+') as f:
     #         out[1]['caption'] = cap_1
     #         json.dump(out[1], f)
+
 
 if __name__ == "__main__":
     app.run(main)
