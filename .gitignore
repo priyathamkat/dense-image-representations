@@ -170,4 +170,4 @@ GRIT/
 *_text_graph/
 *_text_graph_test/
 wandb/
-run_script.sh
+run_*.sh

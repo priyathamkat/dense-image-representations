@@ -11,7 +11,6 @@ from GCL.models import DualBranchContrast
 from data.graph_dataset import ImageTextGraphDataset
 from gcn.deeper_gcn import DeeperGCN
 
-from tqdm import tqdm
 import wandb
 import pdb
 
@@ -40,6 +39,8 @@ def train(vision_encoder_model, text_encoder_model, contrast_model, dataloader, 
         loss.backward()
         optimizer.step()
 
+        wandb.log({"loss": loss.item()})
+
         epoch_loss += loss.item()
     return epoch_loss
 
@@ -48,7 +49,7 @@ def get_avg_sim(sim_matrix):
     eye = torch.eye(sim_matrix.shape[0], device = sim_matrix.device).bool()
     diag = (sim_matrix * eye).nonzero()
     off_diag = (sim_matrix * ~eye).nonzero()
-    return sim_matrix[diag].mean().item(), sim_matrix[off_diag].mean().item()
+    return sim_matrix[diag[:,0], diag[:,1]].mean().item(), sim_matrix[off_diag[:,0], off_diag[:,1]].mean().item()
 
 
 def test(vision_encoder_model, text_encoder_model, dataloader):
@@ -75,13 +76,13 @@ def test(vision_encoder_model, text_encoder_model, dataloader):
     x2 = F.normalize(x2, dim = 1)
     
     sim_1_1 = torch.matmul(x1, x1.T)
-    sim_1_2 = torch.matmul(x2, x2.T)
+    sim_2_2 = torch.matmul(x2, x2.T)
     sim_1_2 = torch.matmul(x1, x2.T)
     
     diag_sim_v_v, off_diag_sim_v_v = get_avg_sim(sim_1_1)
     wandb.log({"diag_sim_v_v": diag_sim_v_v, "off_diag_sim_v_v": off_diag_sim_v_v})
 
-    diag_sim_t_t, off_diag_sim_t_t = get_avg_sim(sim_1_2)
+    diag_sim_t_t, off_diag_sim_t_t = get_avg_sim(sim_2_2)
     wandb.log({"diag_sim_t_t": diag_sim_t_t, "off_diag_sim_t_t": off_diag_sim_t_t})
 
     diag_sim_v_t, off_diag_sim_v_t = get_avg_sim(sim_1_2)
@@ -148,9 +149,9 @@ wandb.init(
 )
 
 
-for epoch in range(1, args.epochs+1):
+for epoch in range(args.epochs):
     loss = train(vision_encoder, text_encoder, contrast_model, graph_dataloader, optimizer)
-    wandb.log({"loss": loss, "learning_rate": optimizer.param_groups[0]['lr']})
+    wandb.log({"epoch_loss": loss, "learning_rate": optimizer.param_groups[0]['lr']})
         
     if epoch % 10 == 0:
         test(vision_encoder, text_encoder, test_dataloader)
