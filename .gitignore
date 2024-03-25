@@ -161,6 +161,13 @@ cython_debug/
 
 
 text/llama
+GRIT/
 *_visual_graph/
+*_visual_graph_test/
 *_parsed_captions/
 *_graph_vis/
+*_tag_matches/
+*_text_graph/
+*_text_graph_test/
+wandb/
+run_script.sh

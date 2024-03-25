@@ -98,7 +98,7 @@ class ImageSegmentor:
         
         inst_seg = seem_outputs[0]['instances']
 
-        sel_inst_seg = inst_seg[(inst_seg.scores > 0.5).cpu()]
+        sel_inst_seg = inst_seg[(inst_seg.scores > 0.9).cpu()]
         if use_highest_scoring_masks_only:
             sorted_idx = sel_inst_seg.scores.sort(descending = True).indices
             select_inst_idx = [sorted_idx[torch.where(sel_inst_seg.pred_classes[sorted_idx] == c)[0][0]] for c in sel_inst_seg.pred_classes.unique()]    

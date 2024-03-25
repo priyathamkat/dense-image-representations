@@ -13,7 +13,7 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
     "ckpt_dir",
-    "/cmlscratch/pkattaki/developer/llama/llama-2-7b-chat/",
+    "llama/llama-2-13b-chat/",
     "Path to the Llama 2 chat model checkpoint directory.",
 )
 flags.DEFINE_string(
@@ -29,13 +29,17 @@ class CaptionParser:
         chunk_noun_phrases: bool = False,
         max_seq_len: int = 1024,
         max_batch_size: int = 8,
+        generator: Optional[Llama] = None,
     ):
-        self.generator = Llama.build(
-            ckpt_dir=FLAGS.ckpt_dir,
-            tokenizer_path=FLAGS.tokenizer_path,
-            max_seq_len=max_seq_len,
-            max_batch_size=max_batch_size,
-        )
+        if generator is not None:
+            self.generator = generator
+        else:
+            self.generator = Llama.build(
+                ckpt_dir=FLAGS.ckpt_dir,
+                tokenizer_path=FLAGS.tokenizer_path,
+                max_seq_len=max_seq_len,
+                max_batch_size=max_batch_size,
+            )
         self.chunk_noun_phrases = chunk_noun_phrases
 
     def ask_llama(
@@ -241,26 +245,28 @@ class CaptionParser:
                 decoded_result = {"objects": [], "relationships": []}
             finally:
                 indexed_relationships = []
-                for relationship in decoded_result["relationships"]:
-                    if len(relationship) == 3 and None not in relationship:
-                        indexed_relationship = [
-                            get_object_index(
-                                relationship[0], decoded_result["objects"]
-                            ),
-                            get_object_index(
-                                relationship[1], decoded_result["objects"]
-                            ),
-                            relationship[2],
-                        ]
-                        if None not in indexed_relationship:
-                            indexed_relationships.append(indexed_relationship)
+                if 'relationships' in decoded_result:
+                    for relationship in decoded_result["relationships"]:
+                        if len(relationship) == 3 and None not in relationship:
+                            indexed_relationship = [
+                                get_object_index(
+                                    relationship[0], decoded_result["objects"]
+                                ),
+                                get_object_index(
+                                    relationship[1], decoded_result["objects"]
+                                ),
+                                relationship[2],
+                            ]
+                            if None not in indexed_relationship:
+                                indexed_relationships.append(indexed_relationship)
                 decoded_result["relationships"] = indexed_relationships
                 outputs.append(decoded_result)
         return outputs
 
 
 def main(_):
-    parser = CaptionParser()
+    bs = 16
+    parser = CaptionParser(chunk_noun_phrases = False, max_batch_size = bs)
     # print(
     #     parser.parse(
     #         captions=[
@@ -274,20 +280,27 @@ def main(_):
     # )
 
     # Parse COCO captions
-    # f = open('/fs/cml-datasets/coco/annotations/captions_train2017.json')
-    # d = json.load(f)['annotations']
-    # save_path = '../coco_parsed_captions'
-    # if not os.path.exists(save_path):
-    #     os.makedirs(save_path)
+    f = open('/fs/cml-datasets/coco/annotations/captions_train2017.json')
+    d = json.load(f)['annotations']
+    save_path = '../coco_parsed_captions'
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
 
-    # for ann in d:
-    #     image_id = ann['image_id']
-    #     cap_id = ann['id']
-    #     out = parser.parse([ann['caption']])[0]
-    #     if len(out['objects']) > 0 and len(out['relationships']) > 0:
-    #         with open(f'{save_path}/{image_id}_{cap_id}.json', 'w+') as f:
-    #             out['caption'] = ann['caption']
-    #             json.dump(out, f)
+    i = 406800
+    while i < len(d):
+        anns = d[i : i+bs]
+        image_ids = [ann['image_id'] for ann in anns]
+        cap_ids = [ann['id'] for ann in anns]
+        captions = [ann['caption'] for ann in anns]
+        outs = parser.parse(captions)
+        print(outs)
+        for j in range(len(outs)):
+            out = outs[j]
+            if len(out['objects']) > 0 and len(out['relationships']) > 0:
+                with open(f'{save_path}/{image_ids[j]}_{cap_ids[j]}.json', 'w+') as f:
+                    out['caption'] = captions[j]
+                    json.dump(out, f)
+        i += bs
 
     # Parse Winoground captions
     # save_path = '../winoground_parsed_captions'

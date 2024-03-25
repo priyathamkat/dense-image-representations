@@ -79,16 +79,11 @@ def get_iou(mask1, mask2):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--visual_graphs_save_path', type=str)
     parser.add_argument('--dataset', type=str, default='coco')
-    parser.add_argument('--parsed_captions_path', type=str)
-    parser.add_argument('--batch_size', type=int)
+    parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_workers', type=int, default=1)
 
     args = parser.parse_args()
-    
-    if not os.path.exists(f'{args.visual_graphs_save_path}'):
-        os.makedirs(f'{args.visual_graphs_save_path}')
     
     transform = transforms.Compose([
         transforms.Resize((512, 512), interpolation=Image.BICUBIC),
@@ -120,17 +115,23 @@ if __name__ == '__main__':
 
     text_graph_constructor = TextGraphConstructor()
 
-    coco_classes_emb = torch.Tensor(F.normalize(text_graph_constructor.encode_with_lm(COCO_PANOPTIC_CLASSES)))
-
     device = torch.device('cuda')
 
+    if not os.path.exists(f'{args.dataset}_graph_vis'):
+        os.makedirs(f'{args.dataset}_graph_vis')
+    
+    if not os.path.exists(f'{args.dataset}_visual_graph'):
+        os.makedirs(f'{args.dataset}_visual_graph')
+
+    
     for i, batch in enumerate(train_loader):
         # One image at a time, Batch size = 1
         images, image_sizes, image_ids = batch 
 
-        parsed_captions = glob.glob(f'{args.parsed_captions_path}/{image_ids[0].item()}_*.json')
-        if len(parsed_captions) == 0:
-            continue
+        parsed_captions = [0]
+        # parsed_captions = glob.glob(f'{args.dataset}_parsed_captions/{image_ids[0].item()}_*.json')
+        # if len(parsed_captions) == 0:
+        #     continue
         j = 0
         for j in range(len(parsed_captions)):
             # Multiple images per caption (winoground case)
@@ -139,11 +140,14 @@ if __name__ == '__main__':
             else:
                 image, image_size, image_id = images.squeeze(), image_sizes.squeeze(), image_ids.squeeze()
            
-            parsed_caption = json.load(open(parsed_captions[j]))
-            text_graph = text_graph_constructor(parsed_caption).cpu()
-            visualize_graph(text_graph, f'{args.dataset}_graph_vis/{image_id.item()}_{j}_text_graph.png', parsed_caption['caption'])
+            if os.path.exists(f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt'):
+                continue
             
-            segmentor.seem_metadata = segmentor.get_metadata(class_list = [])
+            # parsed_caption = json.load(open(parsed_captions[j]))
+            # text_graph = text_graph_constructor(parsed_caption).cpu()
+            # visualize_graph(text_graph, f'{args.dataset}_graph_vis/{image_id.item()}_{j}_text_graph.png', parsed_caption['caption'])
+            
+            # segmentor.seem_metadata = segmentor.get_metadata(class_list = [])
             inst_seg = segmentor(image.to(device), image_size)
 
             pil_resize_transform = transforms.Compose([
@@ -151,42 +155,42 @@ if __name__ == '__main__':
                 transforms.Resize(inst_seg.image_size, interpolation=Image.BICUBIC),
             ])
             original_image = pil_resize_transform(image)
-            original_image.save(f'{args.dataset}_graph_vis/{image_id.item()}_{j}_original_image.png')
-            segmentor.visualize_segmented_image(original_image, inst_seg, save_path = f'{args.dataset}_graph_vis/{image_id.item()}_{j}_inst_seg.png')
+            # original_image.save(f'{args.dataset}_graph_vis/{image_id.item()}_{j}_original_image.png')
+            # segmentor.visualize_segmented_image(original_image, inst_seg, save_path = f'{args.dataset}_graph_vis/{image_id.item()}_{j}_inst_seg.png')
 
-            labels = []
-            for nn in text_graph.node_names:
-                blob = TextBlob(nn)
-                labels += [tag[0] for tag in blob.tags if tag[1] == 'NN']
+            # We have (1) inst segmentations and (2) attributed objects from the parsed caption
+            # Now we need to match (1) and (2) by asking an LLM 
 
-            labels = list(set(labels))
-            # Map labels to COCO_PANOPTIC_CLASSES
-            labels_emb = torch.Tensor(F.normalize(text_graph_constructor.encode_with_lm(labels)))
-            sim = torch.matmul(labels_emb, coco_classes_emb.T)
-            
-            pdb.set_trace()
+            # # Get matches based on IOU
+            # segmentor.seem_metadata = segmentor.get_metadata(labels, include_coco_classes = False)
+            # text_graph_guided_inst_seg = segmentor(image.to(device), image_size)
+            # segmentor.visualize_segmented_image(original_image, text_graph_guided_inst_seg, save_path = f'{args.dataset}_graph_vis/{image_id.item()}_{j}_text_graph_guided_inst_seg.png')
 
-            segmentor.seem_metadata = segmentor.get_metadata(labels, include_coco_classes = False)
-            text_graph_guided_inst_seg = segmentor(image.to(device), image_size)
-            segmentor.visualize_segmented_image(original_image, text_graph_guided_inst_seg, save_path = f'{args.dataset}_graph_vis/{image_id.item()}_{j}_text_graph_guided_inst_seg.png')
+            # mask_iou_matrix = torch.zeros((text_graph_guided_inst_seg.pred_masks.shape[0], inst_seg.pred_masks.shape[0]))
+            # for m1 in range(text_graph_guided_inst_seg.pred_masks.shape[0]):
+            #     for m2 in range(inst_seg.pred_masks.shape[0]):
+            #         mask_iou_matrix[m1][m2] = get_iou(text_graph_guided_inst_seg.pred_masks[m1].unsqueeze(0), inst_seg.pred_masks[m2].unsqueeze(0)).squeeze()
 
-            mask_iou_matrix = torch.zeros((text_graph_guided_inst_seg.pred_masks.shape[0], inst_seg.pred_masks.shape[0]))
-            for m1 in range(text_graph_guided_inst_seg.pred_masks.shape[0]):
-                for m2 in range(inst_seg.pred_masks.shape[0]):
-                    mask_iou_matrix[m1][m2] = get_iou(text_graph_guided_inst_seg.pred_masks[m1].unsqueeze(0), inst_seg.pred_masks[m2].unsqueeze(0)).squeeze()
+            # box_iou_matrix = box_iou(text_graph_guided_inst_seg.pred_boxes.tensor, inst_seg.pred_boxes.tensor)
+            # matches = torch.where(mask_iou_matrix > 0.5)
 
-            box_iou_matrix = box_iou(text_graph_guided_inst_seg.pred_boxes.tensor, inst_seg.pred_boxes.tensor)
-
-            # Get matches based on IOU
-            matches = torch.where(mask_iou_matrix > 0.5)
-
-            pdb.set_trace()
-
-            # visual_graph = vision_graph_constructor(original_image, inst_seg).cpu()
-            # visualize_graph(visual_graph, f'{args.dataset}_graph_vis/{image_id.item()}_{j}_visual_graph.png')
-            # torch.save(visual_graph, f'{args.visual_graphs_save_path}/{image_ids[0].item()}_graph.pt')
+            visual_graph = vision_graph_constructor(original_image, inst_seg).cpu()
+            # visualize_graph(visual_graph, f'{args.dataset}_graph_vis/{image_id.item()}_{j}.png')
+            torch.save(visual_graph, f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt')
 
             # Match the nodes of visual instances and text graph using T5 embeddings 
+            # Optionally match based on the nouns in the text nodes
+            # labels = []
+            # for nn in text_graph.node_names:
+            #     blob = TextBlob(nn)
+            #     labels += [tag[0] for tag in blob.tags if tag[1] == 'NN']
+            # labels = list(set(labels))
+            # # Map labels to COCO_PANOPTIC_CLASSES
+            # labels_emb = torch.Tensor(F.normalize(text_graph_constructor.encode_with_lm(labels)))
+            # coco_classes_emb = torch.Tensor(F.normalize(text_graph_constructor.encode_with_lm(COCO_PANOPTIC_CLASSES)))
+            # sim = torch.matmul(labels_emb, coco_classes_emb.T)
+
+
             # visual_nodes = torch.cat([text_graph_constructor.encode_with_lm(COCO_PANOPTIC_CLASSES[c.item()]).cpu() for c in inst_seg.pred_classes.cpu()])
             # visual_nodes_norm = F.normalize(visual_nodes, dim = 1)
             # text_nodes_norm = F.normalize(text_graph.x, dim = 1)

@@ -2,11 +2,16 @@ import torch
 from torch_geometric.data import Data as GraphData
 from transformers import AutoTokenizer, T5EncoderModel
 
+import glob
+import json 
+import re
+import pdb
+import os 
 
 class TextGraphConstructor:
     def __init__(self) -> None:
-        self.tokenizer = AutoTokenizer.from_pretrained("t5-base")
-        self.model = T5EncoderModel.from_pretrained("t5-base")
+        self.tokenizer = AutoTokenizer.from_pretrained("t5-small")
+        self.model = T5EncoderModel.from_pretrained("t5-small")
         self.model.to("cuda")
 
     def encode_with_lm(self, texts):
@@ -39,15 +44,26 @@ class TextGraphConstructor:
 
 if __name__ == "__main__":
     text_graph_constructor = TextGraphConstructor()
-    parsed_caption = {
-        "objects": ["dog", "ball"],
-        "relationships": [[0, 1, "playing with"]],
-    }
-    graph = text_graph_constructor(parsed_caption)
-    print(
-        graph.num_nodes,
-        graph.is_directed(),
-        graph.num_edges,
-        graph.num_node_features,
-        graph.num_edge_features,
-    )
+    # parsed_caption = {
+    #     "objects": ["dog", "ball"],
+    #     "relationships": [[0, 1, "playing with"]],
+    # }
+    # graph = text_graph_constructor(parsed_caption)
+    # print(
+    #     graph.num_nodes,
+    #     graph.is_directed(),
+    #     graph.num_edges,
+    #     graph.num_node_features,
+    #     graph.num_edge_features,
+    # )
+
+    l = glob.glob('../coco_parsed_captions/*.json')
+    for f in l:
+        if not os.path.exists('../coco_text_graph/{cap_id}.pt'):
+            with open(f, 'r') as file:
+                parsed_caption = json.load(file)
+            graph = text_graph_constructor(parsed_caption)
+            cap_id = re.findall('coco_parsed_captions\/(.*)\.json', f)[0]
+            torch.save(graph, f'../coco_text_graph/{cap_id}.pt')
+
+            
