@@ -119,7 +119,7 @@ class VisionGraphConstructor:
                         node_names = node_classes,
                         edge_index = torch.tensor(edge_index).t(),
                         edge_attr = self.encode_with_lm(edge_classes).detach().cpu(),
-                        edge_names = edge_classes)
+                        edge_names = edge_classes).cpu()
 
         return graph_data
 

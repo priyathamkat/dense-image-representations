@@ -3,13 +3,17 @@ import torch
 from torch.optim import Adam
 import torch.nn.functional as F
 
+from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from transformers import AutoTokenizer, T5EncoderModel
+
+import torch_geometric.transforms as T
 from torch_geometric.loader import DataLoader
 
 import GCL.losses as L
 from GCL.models import DualBranchContrast
 
-from data.graph_dataset import ImageTextGraphDataset
-from gcn.deeper_gcn import DeeperGCN
+from data.graph_dataset import ImageTextGraphDataset, ImageGraphTextCaptionDataset
+# from gcn.deeper_gcn import DeeperGCN
 
 import wandb
 import pdb
@@ -19,6 +23,7 @@ def train(vision_encoder_model, text_encoder_model, contrast_model, dataloader, 
     text_encoder_model.train()
     epoch_loss = 0
     for i, batch in enumerate(dataloader):
+        pdb.set_trace()
         vision_data, text_data = batch
         vision_data = vision_data.to('cuda')
         text_data = text_data.to('cuda')
@@ -31,6 +36,7 @@ def train(vision_encoder_model, text_encoder_model, contrast_model, dataloader, 
         z1, g1 = vision_encoder_model(vision_data.x, vision_data.edge_index, vision_data.edge_attr, vision_data.batch)
         z2, g2 = text_encoder_model(text_data.x, text_data.edge_index, text_data.edge_attr, text_data.batch)
 
+        pdb.set_trace()
         g1 = vision_encoder_model.project(g1)
         g2 = text_encoder_model.project(g2)
 
@@ -63,6 +69,8 @@ def test(vision_encoder_model, text_encoder_model, dataloader):
         text_data = text_data.to('cuda')
         optimizer.zero_grad()
 
+        
+        pdb.set_trace()
         _, g1 = vision_encoder_model(vision_data.x, vision_data.edge_index, vision_data.edge_attr, vision_data.batch)
         _, g2 = text_encoder_model(text_data.x, text_data.edge_index, text_data.edge_attr, text_data.batch)
 
@@ -101,38 +109,52 @@ parser.add_argument('--num_layers', type=int, default=7)
 parser.add_argument('--batch_size', type=int, default=512)
 parser.add_argument('--lr', type=float, default=0.01)
 parser.add_argument('--epochs', type=int, default=100)
+parser.add_argument('--num_workers', type=int, default=16)
 
 args = parser.parse_args()
 
 device = torch.device('cuda')
 
-graph_dataset = ImageTextGraphDataset(image_root=args.vision_graph_data, text_root=args.text_graph_data)
-test_dataset = ImageTextGraphDataset(image_root=f'{args.vision_graph_data}_test', text_root=f'{args.text_graph_data}_test')
+transform = T.Compose([T.VirtualNode()])
+
+tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-small")
+graph_dataset = ImageTextGraphDataset(image_root=args.vision_graph_data, text_root=args.text_graph_data, transform=transform)
+test_dataset = ImageTextGraphDataset(image_root=f'{args.vision_graph_data}_test', text_root=f'{args.text_graph_data}_test', transform=transform)
+# graph_dataset = ImageGraphTextCaptionDataset(image_root=args.vision_graph_data, text_root=args.text_graph_data, tokenizer = tokenizer, transform=transform)
+# test_dataset = ImageGraphTextCaptionDataset(image_root=f'{args.vision_graph_data}_test', text_root=f'{args.text_graph_data}_test', tokenizer = tokenizer, transform=transform)
+
 
 graph_dataloader = DataLoader(
     graph_dataset,
     batch_size=args.batch_size,
-    shuffle=True
+    shuffle=True,
+    num_workers=args.num_workers,
 )
 
 test_dataloader = DataLoader(
     test_dataset,
     batch_size=args.batch_size,
-    shuffle=False
+    shuffle=False,
+    num_workers=args.num_workers,
 )
 
-vision_encoder = DeeperGCN(
-    in_channels = graph_dataset.num_features,
-    hidden_channels = args.hidden_channels,
-    num_layers = args.num_layers
-).to(device)
+encoder_layer = TransformerEncoderLayer(d_model = 512, nhead = 8)
+vision_encoder = TransformerEncoder(encoder_layer = encoder_layer, num_layers = 4)
+
+text_encoder = T5EncoderModel.from_pretrained("google-t5/t5-small")
+
+# vision_encoder = DeeperGCN(
+#     in_channels = graph_dataset.num_features,
+#     hidden_channels = args.hidden_channels,
+#     num_layers = args.num_layers
+# ).to(device)
 
 
-text_encoder = DeeperGCN(
-    in_channels = graph_dataset.num_features,
-    hidden_channels = args.hidden_channels,
-    num_layers = args.num_layers
-).to(device)
+# text_encoder = DeeperGCN(
+#     in_channels = graph_dataset.num_features,
+#     hidden_channels = args.hidden_channels,
+#     num_layers = args.num_layers
+# ).to(device)
 
 contrast_model = DualBranchContrast(loss=L.InfoNCE(tau=0.2), mode='G2G').to(device)
 optimizer = Adam(list(vision_encoder.parameters()) + list(text_encoder.parameters()), lr=args.lr)

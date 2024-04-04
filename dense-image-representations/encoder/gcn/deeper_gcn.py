@@ -13,7 +13,8 @@ class DeeperGCN(nn.Module):
         self.edge_encoder = nn.Linear(in_channels, hidden_channels)
 
         self.layers = nn.ModuleList()
-        for i in range(1, num_layers + 1):
+        # for i in range(1, num_layers + 1):
+        for i in range(num_layers):
             conv = GENConv(hidden_channels, hidden_channels, aggr='softmax',
                            t=1.0, learn_t=True, num_layers=2, norm='layer')
             norm = nn.LayerNorm(hidden_channels, elementwise_affine=True)
@@ -32,18 +33,19 @@ class DeeperGCN(nn.Module):
     def forward(self, x, edge_index, edge_attr, batch):
         z = x
         zs = []
+
         z = self.node_encoder(z)
         edge_attr = self.edge_encoder(edge_attr)
 
-        z = self.layers[0].conv(z, edge_index, edge_attr)
-        zs.append(z)
+        # z = self.layers[0].conv(z, edge_index, edge_attr)
+        # zs.append(z)
 
         for layer in self.layers[1:]:
             z = layer(z, edge_index, edge_attr)
             zs.append(z)
 
-        z = self.layers[0].act(self.layers[0].norm(z))
-        z = F.dropout(z, p=0.1, training=self.training)
+        # z = self.layers[0].act(self.layers[0].norm(z))
+        # z = F.dropout(z, p=0.1, training=self.training)
 
         gs = [global_add_pool(z, batch) for z in zs]
         z, g = [torch.cat(x, dim=1) for x in [zs, gs]]
