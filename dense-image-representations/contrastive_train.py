@@ -1,18 +1,17 @@
 import argparse
 import torch
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer, T5EncoderModel
+import torchvision.transforms as T
 import wandb
 from losses import ContrastiveLoss
-from modules import ProjectionHead
+from modules import VisionLanguageEncoder
 
+from data.tokens import VisualAndTextTokens
+
+import pdb
 
 def train(
-    image_encoder: TransformerEncoder,
-    image_embeddings_projector: ProjectionHead,
-    text_encoder: T5EncoderModel,
-    text_embeddings_projector: ProjectionHead,
+    vision_language_encoder: VisionLanguageEncoder,
     optimizer: torch.optim.Optimizer,
     train_dataloader: DataLoader,
     val_dataloader: DataLoader, 
@@ -40,20 +39,20 @@ def train(
     for epoch in range(args.epochs):
         epoch_loss = 0
 
-        image_encoder.train()
-        image_embeddings_projector.train()
-        text_encoder.train()
-        text_embeddings_projector.train()
+        vision_language_encoder.train()
 
-        for text_tokens, visual_tokens in train_dataloader:
-            text_tokens = text_tokens.to('cuda')
-            visual_tokens = visual_tokens.to('cuda')
+        for batch in train_dataloader:
+            text_tokens = batch[2].to('cuda')
+            image_tokens = batch[0].to('cuda')
+            image_attention_mask = batch[1].to('cuda')
+            
+            image_attention_mask[image_attention_mask == 0] = float('-inf')
+            image_attention_mask[image_attention_mask == 1] = 0
+            
+            image_embeddings, text_embeddings = vision_language_encoder(image_tokens, image_attention_mask, text_tokens)
 
-            text_embeddings = text_encoder(text_tokens)
-            text_embeddings = text_embeddings_projector(text_embeddings)
-
-            image_embeddings = image_encoder(visual_tokens)
-            image_embeddings = image_embeddings_projector(image_embeddings)
+            image_embeddings = image_embeddings.mean(dim=1)
+            text_embeddings = text_embeddings.mean(dim=1)
 
             loss = contrastive_loss(text_embeddings, image_embeddings)
 
@@ -70,14 +69,11 @@ def train(
         wandb.log({"epoch_training_loss": loss, "learning_rate": optimizer.param_groups[0]['lr']})
 
         if epoch % args.validation_epochs == 0:
-            evaluate(image_encoder, image_embeddings_projector, text_encoder, text_embeddings_projector, val_dataloader, contrastive_loss)
+            evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
 
 
 def evaluate(
-    image_encoder: TransformerEncoder,
-    image_embeddings_projector: ProjectionHead,
-    text_encoder: T5EncoderModel,
-    text_embeddings_projector: ProjectionHead,
+    vision_language_encoder: VisionLanguageEncoder,
     val_dataloader: DataLoader,
     contrastive_loss: ContrastiveLoss, 
 ):
@@ -96,22 +92,19 @@ def evaluate(
         None
     """
 
-    image_encoder.eval()
-    image_embeddings_projector.eval()
-    text_encoder.eval()
-    text_embeddings_projector.eval()
+    vision_language_encoder.eval()
 
     loss = 0
-    for text_tokens, visual_tokens in val_dataloader:
-        text_tokens = text_tokens.to('cuda')
-        visual_tokens = visual_tokens.to('cuda')
+    for batch in val_dataloader:
+        text_tokens = batch[2].to('cuda')
+        image_tokens = batch[0].to('cuda')
+        image_attention_mask = batch[1].to('cuda')
 
         with torch.no_grad():
-            text_embeddings = text_encoder(text_tokens)
-            text_embeddings = text_embeddings_projector(text_embeddings)
+            image_embeddings, text_embeddings = vision_language_encoder(image_tokens, image_attention_mask, text_tokens)
 
-            image_embeddings = image_encoder(visual_tokens)
-            image_embeddings = image_embeddings_projector(image_embeddings)
+            image_embeddings = image_embeddings.mean(dim=1)
+            text_embeddings = text_embeddings.mean(dim=1)
 
             loss += contrastive_loss(text_embeddings, image_embeddings).item() * text_tokens.shape[0]
         
@@ -127,8 +120,8 @@ def parse_args():
 
     parser.add_argument('--exp_name', type=str, required=True)
 
-    parser.add_argument('--vision_graph_data', type=str, required=True)
-    parser.add_argument('--text_graph_data', type=str, required=True)
+    parser.add_argument('--vision_tokens', type=str, required=True)
+    parser.add_argument('--text_tokens', type=str, required=True)
 
     parser.add_argument('--hidden_channels', type=int, default=64)
     parser.add_argument('--num_layers', type=int, default=7)
@@ -160,33 +153,32 @@ def init_wandb(args):
 def main():
     args = parse_args()
 
-    image_encoder = TransformerEncoder(
-        encoder_layer=TransformerEncoderLayer(d_model=512, nhead=8),
-        num_layers=4
-    )
-    image_embeddings_projector = ProjectionHead(embedding_dim=1024, projection_dim=512, dropout=0.1) # TODO: Change the parameters
-    
-    tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-small")
-    text_encoder = T5EncoderModel.from_pretrained("google-t5/t5-small")
-    text_embeddings_projector = ProjectionHead(embedding_dim=768, projection_dim=512, dropout=0.1) # TODO: Change the parameters
+    vision_language_encoder = VisionLanguageEncoder(embed_dim=512, projection_dim=128, transformer_width=512, transformer_heads=8, transformer_layers=6)
+    vision_language_encoder = vision_language_encoder.cuda()
 
     optimizer = torch.optim.Adam(
-        list(image_encoder.parameters()) + list(image_embeddings_projector.parameters()) + list(text_encoder.parameters()) + list(text_embeddings_projector.parameters()),
+        vision_language_encoder.parameters(),
         lr=args.lr
     )
 
-    dataset = None # TODO: return the input to the tokenizer and the input to the image encoder
-    train_dataloader = None # TODO
-    val_dataloader = None # TODO
+    dataset = VisualAndTextTokens(image_root=args.vision_tokens, text_root=args.text_tokens)
+    train_dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+    )
+    val_dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
 
     init_wandb(args)
 
     train(
-        image_encoder,
-        image_embeddings_projector,
-        tokenizer,
-        text_encoder,
-        text_embeddings_projector,
+        vision_language_encoder,
         optimizer,
         train_dataloader,
         val_dataloader,

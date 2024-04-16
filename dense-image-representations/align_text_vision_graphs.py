@@ -130,6 +130,9 @@ if __name__ == '__main__':
     if not os.path.exists(f'{args.dataset}_visual_graph'):
         os.makedirs(f'{args.dataset}_visual_graph')
 
+    if not os.path.exists(f'{args.dataset}_visual_tokens'):
+        os.makedirs(f'{args.dataset}_visual_tokens')
+
     
     for i, batch in enumerate(train_loader):
         # One image at a time, Batch size = 1
@@ -147,8 +150,8 @@ if __name__ == '__main__':
             else:
                 image, image_size, image_id = images.squeeze(), image_sizes.squeeze(), image_ids.squeeze()
            
-            if os.path.exists(f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt'):
-                continue
+            # if os.path.exists(f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt'):
+            #     continue
             
             # parsed_caption = json.load(open(parsed_captions[j]))
             # text_graph = text_graph_constructor(parsed_caption).cpu()
@@ -163,7 +166,7 @@ if __name__ == '__main__':
             ])
             original_image = pil_resize_transform(image)
             # original_image.save(f'{args.dataset}_graph_vis/{image_id.item()}_{j}_original_image.png')
-            segmentor.visualize_segmented_image(original_image, inst_seg, save_path = f'{args.dataset}_graph_vis/{image_id.item()}_{j}_inst_seg.png')
+            # segmentor.visualize_segmented_image(original_image, inst_seg, save_path = f'{args.dataset}_graph_vis/{image_id.item()}_{j}_inst_seg.png')
 
             # We have (1) inst segmentations and (2) attributed objects from the parsed caption
             # Now we need to match (1) and (2) by asking an LLM 
@@ -186,7 +189,7 @@ if __name__ == '__main__':
             torch.save(visual_graph, f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt')
 
 
-            num_tokens = visual_graph.x.shape[0] + visual_graph.edge_index.shape[0] + 1
+            num_tokens = visual_graph.x.shape[0] + len(visual_graph.edge_names)
             attention_mask = torch.zeros((num_tokens, num_tokens))
             i = 0
             # attend only where necessary
@@ -201,14 +204,14 @@ if __name__ == '__main__':
             for b1 in range(bboxes.tensor.shape[0]):
                 dists = []
                 for b2 in range(bboxes.tensor.shape[0]):
-                    if b1 == b2:
-                        continue
                     dists.append(calculate_bbox_distance(bboxes.tensor[b1], bboxes.tensor[b2]))
                 
                 dists = torch.stack(dists)
-                pdb.set_trace()
+                for idx in dists.sort().indices[:2]:
+                    if idx == b1:
+                        continue
+                    attention_mask[b1, idx] = 1
 
-            pdb.set_trace()
             visual_tokens = torch.cat([visual_graph.x, visual_graph.edge_attr], dim = 0)
             torch.save(visual_tokens, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_tokens.pt')
             torch.save(attention_mask, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_attention_mask.pt')
