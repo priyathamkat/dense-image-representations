@@ -46,9 +46,11 @@ def train(
             image_tokens = batch[0].to('cuda')
             image_attention_mask = batch[1].to('cuda')
             
-            image_attention_mask[image_attention_mask == 0] = float('-inf')
-            image_attention_mask[image_attention_mask == 1] = 0
-            
+            # image_attention_mask[image_attention_mask == 0] = float('-inf')
+            # image_attention_mask[image_attention_mask == 1] = 0
+
+            image_attention_mask = torch.zeros(image_tokens.shape[0], image_tokens.shape[1], image_tokens.shape[1]).to('cuda')
+
             image_embeddings, text_embeddings = vision_language_encoder(image_tokens, image_attention_mask, text_tokens)
 
             image_embeddings = image_embeddings.mean(dim=1)
