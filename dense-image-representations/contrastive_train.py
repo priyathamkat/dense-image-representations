@@ -9,6 +9,7 @@ from modules import VisionLanguageEncoder
 
 from data.tokens import VisualAndTextTokens
 
+import os
 import numpy as np
 import pdb
 
@@ -45,6 +46,7 @@ def train(
     train_dataloader: DataLoader,
     val_dataloader: DataLoader, 
     contrastive_loss: ContrastiveLoss,
+    checkpoint_dir: str,
     args: argparse.Namespace,
 ):
     """
@@ -91,19 +93,22 @@ def train(
             loss.backward()
             optimizer.step()
 
-            step = (len(train_dataloader.dataset) // text_tokens.shape[0]) * epoch + i
+            step = (len(train_dataloader.dataset) // args.batch_size) * epoch + i
             lr_scheduler(step)
 
             wandb.log({"loss": loss.item()})
             
             epoch_loss += loss.item() * text_tokens.shape[0]
-        
+
         epoch_loss /= len(train_dataloader.dataset)
 
         wandb.log({"epoch_training_loss": loss, "learning_rate": optimizer.param_groups[0]['lr']})
 
         if epoch % args.validation_epochs == 0:
             evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
+
+        if epoch % args.checkpoint_epochs == 0:
+            torch.save(vision_language_encoder.state_dict(), f"{checkpoint_dir}/model_{epoch}.pt")
 
 
 def evaluate(
@@ -195,6 +200,7 @@ def parse_args():
     parser.add_argument('--num_workers', type=int, default=16)
 
     parser.add_argument("--validation_epochs", type=int, default=10)
+    parser.add_argument("--checkpoint_epochs", type=int, default=20)
 
     args = parser.parse_args()
 
@@ -251,6 +257,10 @@ def main():
 
     init_wandb(args)
 
+    checkpoint_dir = f"results/{args.exp_name}"
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+
     train(
         vision_language_encoder,
         optimizer,
@@ -258,6 +268,7 @@ def main():
         train_dataloader,
         val_dataloader,
         ContrastiveLoss(),
+        checkpoint_dir,
         args,
     )
 
