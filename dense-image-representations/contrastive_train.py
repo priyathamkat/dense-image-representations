@@ -9,6 +9,7 @@ from modules import VisionLanguageEncoder
 
 from data.tokens import VisualAndTextTokens
 
+import numpy as np
 import pdb
 
 def get_avg_sim(sim_matrix):
@@ -94,8 +95,7 @@ def train(
             lr_scheduler(step)
 
             wandb.log({"loss": loss.item()})
-            evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
-
+            
             epoch_loss += loss.item() * text_tokens.shape[0]
         
         epoch_loss /= len(train_dataloader.dataset)

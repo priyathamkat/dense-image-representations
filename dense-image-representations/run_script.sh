@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=2560.01
-#SBATCH --output results/coco-32-2-256-0.01.log
-#SBATCH --error results/coco-32-2-256-0.01.log
-#SBATCH --time=72:00:00
+#SBATCH --job-name=2560.0001
+#SBATCH --output results/coco-8-6-256-0.0001.log
+#SBATCH --error results/coco-8-6-256-0.0001.log
+#SBATCH --time=40:00:00
 #SBATCH --gres=gpu:rtxa5000:1
 #SBATCH --qos=scavenger
 #SBATCH --account=scavenger
@@ -10,11 +10,12 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 
-python3 train.py \
---vision_graph_data coco_visual_graph \
---text_graph_data coco_parsed_captions \
+python3 contrastive_train.py \
+--vision_tokens coco_visual_tokens \
+--text_tokens coco_text_tokens \
 --batch_size 256 \
---hidden_channels 32 \
---num_layers 2 \
---lr 0.01 \
---exp_name coco-32-2-256-0.01 \
+--lr 0.0001 \
+--num_heads 8 \
+--num_layers 6 \
+--projection_dim 128 \
+--exp_name coco-8-6-256-0.0001 \

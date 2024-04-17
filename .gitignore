@@ -169,5 +169,7 @@ GRIT/
 *_tag_matches/
 *_text_graph/
 *_text_graph_test/
+*_visual_tokens*/
+*_text_tokens*/
 wandb/
 run_*.sh
