@@ -138,12 +138,11 @@ if __name__ == '__main__':
         # One image at a time, Batch size = 1
         images, image_sizes, image_ids = batch 
 
-        parsed_captions = [0]
-        # parsed_captions = glob.glob(f'{args.dataset}_parsed_captions/{image_ids[0].item()}_*.json')
-        # if len(parsed_captions) == 0:
-        #     continue
+        text_tokens = glob.glob(f'{args.dataset}_text_tokens/{image_ids[0].item()}_*.pt')
+        if len(text_tokens) == 0:
+            continue
         j = 0
-        for j in range(len(parsed_captions)):
+        for j in range(len(text_tokens)):
             # Multiple images per caption (winoground case)
             if len(images) > 1:
                 image, image_size, image_id = images[j].squeeze(), image_sizes[j].squeeze(), image_ids[j].squeeze()
@@ -158,6 +157,12 @@ if __name__ == '__main__':
             # visualize_graph(text_graph, f'{args.dataset}_graph_vis/{image_id.item()}_{j}_text_graph.png', parsed_caption['caption'])
             
             # segmentor.seem_metadata = segmentor.get_metadata(class_list = [])
+
+            
+            if len(image.shape) == 2:
+                image = torch.stack([image, image, image], dim = 0)
+            image = image[:3, :, :] # winoground case when there are 4 channels
+
             inst_seg = segmentor(image.to(device), image_size)
 
             pil_resize_transform = transforms.Compose([
@@ -186,7 +191,7 @@ if __name__ == '__main__':
 
             visual_graph = vision_graph_constructor(original_image, inst_seg).cpu()
             # visualize_graph(visual_graph, f'{args.dataset}_graph_vis/{image_id.item()}_{j}.png')
-            torch.save(visual_graph, f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt')
+            # torch.save(visual_graph, f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt')
 
 
             num_tokens = visual_graph.x.shape[0] + len(visual_graph.edge_names)

@@ -107,7 +107,7 @@ def train(
         if epoch % args.validation_epochs == 0:
             evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
 
-        if epoch % args.checkpoint_epochs == 0:
+        if epoch % args.checkpoint_epochs == 0 or epoch == args.epochs - 1:
             torch.save(vision_language_encoder.state_dict(), f"{checkpoint_dir}/model_{epoch}.pt")
 
 
@@ -142,6 +142,7 @@ def evaluate(
         image_attention_mask = batch[1].to('cuda')
 
         with torch.no_grad():
+            image_attention_mask = torch.zeros(image_tokens.shape[0], image_tokens.shape[1], image_tokens.shape[1]).to('cuda')
             image_embeddings, text_embeddings = vision_language_encoder(image_tokens, image_attention_mask, text_tokens)
 
             image_embeddings = image_embeddings.mean(dim=1)

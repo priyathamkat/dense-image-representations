@@ -9,8 +9,8 @@ class Winoground(Dataset):
         self.transform = transform
 
     def __len__(self):
-        # return len(self.data)
-        return 10
+        return len(self.data)
+        # return 10
 
     def __getitem__(self, idx):
         sample_dict = self.data[idx]
