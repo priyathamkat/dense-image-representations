@@ -11,6 +11,7 @@ from data.tokens import VisualAndTextTokens
 
 import os
 import numpy as np
+import glob
 import pdb
 
 def get_avg_sim(sim_matrix):
@@ -18,6 +19,23 @@ def get_avg_sim(sim_matrix):
     diag = (sim_matrix * eye).nonzero()
     off_diag = (sim_matrix * ~eye).nonzero()
     return sim_matrix[diag[:,0], diag[:,1]].mean().item(), sim_matrix[off_diag[:,0], off_diag[:,1]].mean().item()
+
+def get_retrieval_score(sim_1_2, log_name='v_t'):
+    ranked_sim = sim_1_2.sort(descending=True).indices
+    ranks = []
+    for i in range(ranked_sim.shape[0]):
+        ranks.append(torch.where(ranked_sim[i] == i)[0][0].item())
+    
+    ranks = torch.Tensor(ranks)
+    r1 = 100.0 * len(torch.where(ranks < 1)[0]) / len(ranks)
+    r5 = 100.0 * len(torch.where(ranks < 5)[0]) / len(ranks)
+    r10 = 100.0 * len(torch.where(ranks < 10)[0]) / len(ranks)
+    r50 = 100.0 * len(torch.where(ranks < 50)[0]) / len(ranks)
+    medr = torch.floor(torch.median(ranks)) + 1
+    meanr = ranks.mean() + 1
+    
+    wandb.log({f"{log_name}_r1": r1, f"{log_name}_r5": r5, f"{log_name}_r10": r10, f"{log_name}_r50": r50, f"{log_name}_medr": medr, f"{log_name}_meanr": meanr})
+
 
 def assign_learning_rate(optimizer, new_lr):
     for param_group in optimizer.param_groups:
@@ -67,7 +85,18 @@ def train(
         None
     """
 
-    for epoch in range(args.epochs):
+    start_epoch = 0
+    # load checkpoint if exists
+    ckpts = sorted(glob.glob(f"{checkpoint_dir}/model_*.pth.tar"), key=os.path.getmtime, reverse=True)
+    if len(ckpts) > 0:
+        print(f"Loading state dict {ckpts[0]}")
+        state = torch.load(ckpts[0])
+        vision_language_encoder.load_state_dict(state['state_dict'])
+        optimizer.load_state_dict(state['optimizer_state'])
+        start_epoch = state['epoch'] + 1
+
+    
+    for epoch in range(start_epoch, args.epochs):
         epoch_loss = 0
 
         vision_language_encoder.train()
@@ -98,17 +127,25 @@ def train(
 
             wandb.log({"loss": loss.item()})
             
+            evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
+
             epoch_loss += loss.item() * text_tokens.shape[0]
 
         epoch_loss /= len(train_dataloader.dataset)
 
-        wandb.log({"epoch_training_loss": loss, "learning_rate": optimizer.param_groups[0]['lr']})
+        wandb.log({"epoch_training_loss": loss, "learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
 
         if epoch % args.validation_epochs == 0:
             evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
 
         if epoch % args.checkpoint_epochs == 0 or epoch == args.epochs - 1:
-            torch.save(vision_language_encoder.state_dict(), f"{checkpoint_dir}/model_{epoch}.pt")
+            state = {'state_dict': vision_language_encoder.state_dict(), 
+                    'epoch': epoch,
+                    'optimizer_state': optimizer.state_dict()}
+            ckpts = glob.glob(f"{checkpoint_dir}/model_*.pt*")
+            for ckpt in ckpts:
+                os.remove(ckpt)
+            torch.save(state, f"{checkpoint_dir}/model_{epoch}.pth.tar")
 
 
 def evaluate(
@@ -173,6 +210,10 @@ def evaluate(
     diag_sim_v_t, off_diag_sim_v_t = get_avg_sim(sim_1_2)
     wandb.log({"diag_sim_v_t": diag_sim_v_t, "off_diag_sim_v_t": off_diag_sim_v_t})
 
+    get_retrieval_score(sim_1_2, log_name='v_t')
+    sim_2_1 = sim_1_2.T
+    get_retrieval_score(sim_2_1, log_name='t_v')
+    
     loss /= len(val_dataloader.dataset)
 
     wandb.log({"validation_loss": loss})
@@ -203,7 +244,7 @@ def parse_args():
     parser.add_argument('--num_workers', type=int, default=16)
 
     parser.add_argument("--validation_epochs", type=int, default=10)
-    parser.add_argument("--checkpoint_epochs", type=int, default=20)
+    parser.add_argument("--checkpoint_epochs", type=int, default=50)
 
     args = parser.parse_args()
 
