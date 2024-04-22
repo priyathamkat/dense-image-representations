@@ -86,7 +86,7 @@ def calculate_bbox_distance(box1, box2):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--dataset', type=str, default='coco')
+    parser.add_argument('--dataset', type=str, default='coco_train')
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_workers', type=int, default=1)
 
@@ -96,9 +96,14 @@ if __name__ == '__main__':
         transforms.Resize((512, 512), interpolation=Image.BICUBIC),
         transforms.PILToTensor()])
 
-    if args.dataset == 'coco':
+    if args.dataset == 'coco_train':
         train_dataset = CocoImages(root = '/fs/cml-datasets/coco/images/train2017/', 
                                 annFile = '/fs/cml-datasets/coco/annotations/captions_train2017.json', 
+                                transform = transform)
+
+    elif args.dataset == 'coco_val':
+        train_dataset = CocoImages(root = '/fs/cml-datasets/coco/images/val2017/', 
+                                annFile = '/fs/cml-datasets/coco/annotations/captions_val2017.json', 
                                 transform = transform)
     
     elif args.dataset == 'winoground':
@@ -138,7 +143,10 @@ if __name__ == '__main__':
         # One image at a time, Batch size = 1
         images, image_sizes, image_ids = batch 
 
-        text_tokens = glob.glob(f'{args.dataset}_text_tokens/{image_ids[0].item()}_*.pt')
+        if 'coco' not in args.dataset:
+            text_tokens = glob.glob(f'{args.dataset}_text_tokens/{image_ids[0].item()}_*.pt')
+        else:
+            text_tokens = [0]
         if len(text_tokens) == 0:
             continue
         j = 0
@@ -149,8 +157,8 @@ if __name__ == '__main__':
             else:
                 image, image_size, image_id = images.squeeze(), image_sizes.squeeze(), image_ids.squeeze()
            
-            # if os.path.exists(f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt'):
-            #     continue
+            if os.path.exists(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}.pt'):
+                continue
             
             # parsed_caption = json.load(open(parsed_captions[j]))
             # text_graph = text_graph_constructor(parsed_caption).cpu()

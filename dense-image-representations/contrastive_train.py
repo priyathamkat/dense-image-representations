@@ -183,8 +183,10 @@ def parse_args():
 
     parser.add_argument('--exp_name', type=str, required=True)
 
-    parser.add_argument('--vision_tokens', type=str, required=True)
-    parser.add_argument('--text_tokens', type=str, required=True)
+    parser.add_argument('--vision_tokens_train', type=str, required=True)
+    parser.add_argument('--vision_tokens_val', type=str, required=True)
+    parser.add_argument('--text_tokens_train', type=str, required=True)
+    parser.add_argument('--text_tokens_val', type=str, required=True)
 
     parser.add_argument('--num_layers', type=int, default=6)
     parser.add_argument('--num_heads', type=int, default=8)
@@ -231,8 +233,8 @@ def main():
 
     vision_language_encoder = vision_language_encoder.cuda()
 
-    dataset = VisualAndTextTokens(image_root=args.vision_tokens, text_root=args.text_tokens)
-    val_dataset = VisualAndTextTokens(image_root=args.vision_tokens + '_test', text_root=args.text_tokens + '_test')
+    dataset = VisualAndTextTokens(image_root=args.vision_tokens_train, text_root=args.text_tokens_train)
+    val_dataset = VisualAndTextTokens(image_root=args.vision_tokens_val, text_root=args.text_tokens_val)
     train_dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
