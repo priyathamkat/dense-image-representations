@@ -56,12 +56,13 @@ vision_language_encoder = VisionLanguageEncoder(embed_dim=512,
 
 vision_language_encoder = vision_language_encoder.cuda()
 
-ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pt'), key=os.path.getmtime, reverse=True)
+ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
 if len(ckpts) == 0:
     exit(f"No checkpoints found in results/{args.exp_name}")
 
 print(f"Loading state dict {ckpts[0]}")
-vision_language_encoder.load_state_dict(torch.load(ckpts[0]))
+state = torch.load(ckpts[0])
+vision_language_encoder.load_state_dict(state['state_dict'])
 
 
 text_correct_count = 0

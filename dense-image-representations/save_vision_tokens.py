@@ -19,7 +19,7 @@ import networkx as nx
 
 from data.winoground import Winoground
 from data.coco import CocoImages
-from data.aro import ARORelation
+from data.aro import ARO
 
 from vision.vision_graph_constructor import VisionGraphConstructor
 from vision.image_segmentor import ImageSegmentor
@@ -110,9 +110,11 @@ if __name__ == '__main__':
         train_dataset = Winoground(root = '/cmlscratch/nehamk/datasets/winoground',
                                 transform = transform)
 
+    elif 'aro' in args.dataset:
+        train_dataset = ARO(root = '/cmlscratch/nehamk/datasets/aro', transform = transform, task = args.dataset)
+
     else:
-        train_dataset = ARORelation(root = '/cmlscratch/nehamk/datasets/aro',
-                                    transform = transform)
+        raise ValueError('Invalid dataset')
 
     train_loader = DataLoader(
         train_dataset,
@@ -129,11 +131,11 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
 
-    if not os.path.exists(f'{args.dataset}_graph_vis'):
-        os.makedirs(f'{args.dataset}_graph_vis')
+    # if not os.path.exists(f'{args.dataset}_graph_vis'):
+    #     os.makedirs(f'{args.dataset}_graph_vis')
     
-    if not os.path.exists(f'{args.dataset}_visual_graph'):
-        os.makedirs(f'{args.dataset}_visual_graph')
+    # if not os.path.exists(f'{args.dataset}_visual_graph'):
+    #     os.makedirs(f'{args.dataset}_visual_graph')
 
     if not os.path.exists(f'{args.dataset}_visual_tokens'):
         os.makedirs(f'{args.dataset}_visual_tokens')
@@ -143,7 +145,7 @@ if __name__ == '__main__':
         # One image at a time, Batch size = 1
         images, image_sizes, image_ids = batch 
 
-        if 'coco' not in args.dataset:
+        if 'winoground' in args.dataset:
             text_tokens = glob.glob(f'{args.dataset}_text_tokens/{image_ids[0].item()}_*.pt')
         else:
             text_tokens = [0]

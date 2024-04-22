@@ -9,13 +9,14 @@ from torch.nn import ConstantPad2d
 import pdb
 
 class VisualAndTextTokens(Dataset):
-    def __init__(self, image_root, text_root, image_transform=None, text_transform=None, number_of_images_per_text=1):
+    def __init__(self, image_root, text_root, image_transform=None, text_transform=None, number_of_images_per_text=1, random_sample_text=True):
         super(VisualAndTextTokens).__init__()
         self.image_root = image_root
         self.text_root = text_root
         self.image_transform = image_transform
         self.text_transform = text_transform
         self.number_of_images_per_text = number_of_images_per_text
+        self.random_sample_text = random_sample_text
 
         saved_ids = [re.findall(r'(\d+)_(\d+)', i)[0] for i in glob.glob(f'{self.text_root}/*.pt')]
         saved_ids_dict = {}
@@ -38,8 +39,15 @@ class VisualAndTextTokens(Dataset):
             image_tokens = ConstantPad2d((0, 0, 0, pad), 0)(image_tokens)
             image_attention_mask = ConstantPad2d((0, pad, 0, pad), 0)(image_attention_mask)
 
-            text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{random.choice(self.saved_ids_dict[self.saved_ids[idx]])}_tokens.pt', map_location = 'cpu')
+            if self.random_sample_text:
+                text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{random.choice(self.saved_ids_dict[self.saved_ids[idx]])}_tokens.pt', map_location = 'cpu')
+            else:
+                text_tokens_list = []
+                token_files = glob.glob(f'{self.text_root}/{self.saved_ids[idx]}_*_tokens.pt')
+                for token_file in token_files:
+                    text_tokens_list.append(torch.load(token_file, map_location = 'cpu'))
 
+                text_tokens = text_tokens_list
 
         else:
             image_tokens_list = []
