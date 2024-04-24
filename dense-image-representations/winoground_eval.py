@@ -29,8 +29,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--exp_name', type=str, required=True)
 parser.add_argument('--batch_size', type=int, default=512)
 parser.add_argument('--num_workers', type=int, default=16)
-parser.add_argument('--vision_tokens', type=str, required=True)
-parser.add_argument('--text_tokens', type=str, required=True)
+parser.add_argument('--vision_tokens', type=str, default='winoground_visual_tokens')
+parser.add_argument('--text_tokens', type=str, default='winoground_text_tokens')
 
 parser.add_argument('--num_layers', type=int, default=6)
 parser.add_argument('--num_heads', type=int, default=8)
@@ -56,14 +56,16 @@ vision_language_encoder = VisionLanguageEncoder(embed_dim=512,
 
 vision_language_encoder = vision_language_encoder.cuda()
 
-ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
+# ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
+ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pt'), key=os.path.getmtime, reverse=True)
 if len(ckpts) == 0:
     exit(f"No checkpoints found in results/{args.exp_name}")
 
 print(f"Loading state dict {ckpts[0]}")
 state = torch.load(ckpts[0])
-vision_language_encoder.load_state_dict(state['state_dict'])
-
+# vision_language_encoder.load_state_dict(state['state_dict'])
+vision_language_encoder.load_state_dict(state)
+vision_language_encoder.eval()
 
 text_correct_count = 0
 image_correct_count = 0
@@ -84,8 +86,9 @@ for _, batch in enumerate(loader):
         image_attention_mask_0 = torch.zeros(image_tokens_0.shape[0], image_tokens_0.shape[1], image_tokens_0.shape[1]).to('cuda')
         image_attention_mask_1 = torch.zeros(image_tokens_1.shape[0], image_tokens_1.shape[1], image_tokens_1.shape[1]).to('cuda')
 
-        image_embeddings_0, text_embeddings_0 = vision_language_encoder(image_tokens_0, image_attention_mask_0, text_tokens_0)
-        image_embeddings_1, text_embeddings_1 = vision_language_encoder(image_tokens_1, image_attention_mask_1, text_tokens_1)
+        with torch.no_grad():
+            image_embeddings_0, text_embeddings_0 = vision_language_encoder(image_tokens_0, image_attention_mask_0, text_tokens_0)
+            image_embeddings_1, text_embeddings_1 = vision_language_encoder(image_tokens_1, image_attention_mask_1, text_tokens_1)
 
         image_embeddings_0 = image_embeddings_0.mean(dim=1)
         text_embeddings_0 = text_embeddings_0.mean(dim=1)
