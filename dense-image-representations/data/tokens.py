@@ -1,4 +1,5 @@
 import glob
+import os
 import re
 import json
 import random
@@ -28,6 +29,11 @@ class VisualAndTextTokens(Dataset):
 
         self.saved_ids = list(saved_ids_dict.keys())
         self.saved_ids_dict = saved_ids_dict
+
+        self.image_id_to_num_node_tokens = None
+        if os.path.exists(f'{image_root}/image_id_to_num_node_tokens.json'):
+            with open(f'{image_root}/image_id_to_num_node_tokens.json', 'r') as f:
+                self.image_id_to_num_node_tokens = json.load(f)
 
     def __len__(self):
         return len(self.saved_ids)
@@ -75,6 +81,9 @@ class VisualAndTextTokens(Dataset):
             image_attention_mask = image_attention_mask_list
             text_tokens = text_tokens_list
 
+        if self.image_id_to_num_node_tokens is not None:
+            return image_tokens, image_attention_mask, text_tokens, self.image_id_to_num_node_tokens[self.saved_ids[idx]]
+        
         return image_tokens, image_attention_mask, text_tokens
 
     

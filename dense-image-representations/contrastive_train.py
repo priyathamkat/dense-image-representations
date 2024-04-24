@@ -105,11 +105,13 @@ def train(
             text_tokens = batch[2].to('cuda')
             image_tokens = batch[0].to('cuda')
             image_attention_mask = batch[1].to('cuda')
-            
-            # image_attention_mask[image_attention_mask == 0] = float('-inf')
-            # image_attention_mask[image_attention_mask == 1] = 0
 
-            image_attention_mask = torch.zeros(image_tokens.shape[0], image_tokens.shape[1], image_tokens.shape[1]).to('cuda')
+            if len(batch) == 4:
+                num_node_tokens = batch[3].to('cuda')
+            
+            # image_attention_mask = image_attention_mask.float().masked_fill(image_attention_mask == 0, float('-inf')).masked_fill(image_attention_mask == 1, float(0.0))
+            # image_attention_mask = ~(image_attention_mask.bool())
+            image_attention_mask = torch.zeros(image_tokens.shape[0], image_tokens.shape[1], image_tokens.shape[1]).to('cuda').bool()
 
             image_embeddings, text_embeddings = vision_language_encoder(image_tokens, image_attention_mask, text_tokens)
 
