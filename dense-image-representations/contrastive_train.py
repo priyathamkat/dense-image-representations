@@ -57,6 +57,30 @@ def cosine_lr(optimizer, base_lr, warmup_length, steps):
     return _lr_adjuster
 
 
+def forward_pass(vision_language_encoder, batch):
+    image_tokens = batch[0].cuda()
+    image_features = batch[1].cuda()
+    num_non_pad_tokens = batch[2].cuda()
+    num_nodes = batch[3].cuda()
+    # image_attention_mask = batch[4].cuda()
+    text_tokens = batch[5].cuda()
+    
+    # image_attention_mask = image_attention_mask.float().masked_fill(image_attention_mask == 0, float('-inf')).masked_fill(image_attention_mask == 1, float(0.0))
+    # image_attention_mask = ~(image_attention_mask.bool())
+    # image_attention_mask = torch.zeros(image_tokens.shape[0], image_tokens.shape[1], image_tokens.shape[1]).to('cuda').bool()
+
+    image_embeddings, text_embeddings = vision_language_encoder(image_tokens,
+                                                                image_features,
+                                                                num_non_pad_tokens,
+                                                                num_nodes,
+                                                                text_tokens,
+                                                                )
+
+    image_embeddings = image_embeddings.mean(dim=1)
+    text_embeddings = text_embeddings.mean(dim=1)
+
+    return image_embeddings, text_embeddings
+
 def train(
     vision_language_encoder: VisionLanguageEncoder,
     optimizer: torch.optim.Optimizer,
@@ -102,21 +126,7 @@ def train(
         vision_language_encoder.train()
 
         for i, batch in enumerate(train_dataloader):
-            text_tokens = batch[2].to('cuda')
-            image_tokens = batch[0].to('cuda')
-            image_attention_mask = batch[1].to('cuda')
-
-            if len(batch) == 4:
-                num_node_tokens = batch[3].to('cuda')
-            
-            # image_attention_mask = image_attention_mask.float().masked_fill(image_attention_mask == 0, float('-inf')).masked_fill(image_attention_mask == 1, float(0.0))
-            # image_attention_mask = ~(image_attention_mask.bool())
-            image_attention_mask = torch.zeros(image_tokens.shape[0], image_tokens.shape[1], image_tokens.shape[1]).to('cuda').bool()
-
-            image_embeddings, text_embeddings = vision_language_encoder(image_tokens, image_attention_mask, text_tokens)
-
-            image_embeddings = image_embeddings.mean(dim=1)
-            text_embeddings = text_embeddings.mean(dim=1)
+            image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
             loss = contrastive_loss(text_embeddings, image_embeddings)
 
@@ -128,8 +138,6 @@ def train(
             lr_scheduler(step)
 
             wandb.log({"loss": loss.item()})
-            
-            evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
 
             epoch_loss += loss.item() * text_tokens.shape[0]
 
@@ -176,16 +184,8 @@ def evaluate(
     x1 = []
     x2 = []
     for batch in val_dataloader:
-        text_tokens = batch[2].to('cuda')
-        image_tokens = batch[0].to('cuda')
-        image_attention_mask = batch[1].to('cuda')
-
         with torch.no_grad():
-            image_attention_mask = torch.zeros(image_tokens.shape[0], image_tokens.shape[1], image_tokens.shape[1]).to('cuda')
-            image_embeddings, text_embeddings = vision_language_encoder(image_tokens, image_attention_mask, text_tokens)
-
-            image_embeddings = image_embeddings.mean(dim=1)
-            text_embeddings = text_embeddings.mean(dim=1)
+            image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
             loss += contrastive_loss(text_embeddings, image_embeddings).item() * text_tokens.shape[0]
         
@@ -272,7 +272,8 @@ def main():
                                                     projection_dim=args.projection_dim, 
                                                     transformer_width=512, 
                                                     transformer_heads=args.num_heads, 
-                                                    transformer_layers=args.num_layers)
+                                                    transformer_layers=args.num_layers,
+                                                    image_embedding_size=2880)
 
     vision_language_encoder = vision_language_encoder.cuda()
 

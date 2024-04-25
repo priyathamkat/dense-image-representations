@@ -375,8 +375,8 @@ class GeneralizedSEEM(nn.Module):
         del outputs
 
         processed_results = []
-        for mask_cls_result, mask_pred_result, mask_pred_emb, box_pred_result, input_per_image, image_size in zip(
-            mask_cls_results, mask_pred_results, mask_pred_embs, box_pred_results, batched_inputs, images.image_sizes
+        for mask_cls_result, mask_pred_result, mask_pred_emb, box_pred_result, input_per_image, image_size, image_features_res5, image_features_res4, image_features_res3, image_features_res2  in zip(
+            mask_cls_results, mask_pred_results, mask_pred_embs, box_pred_results, batched_inputs, images.image_sizes, features['res5'], features['res4'], features['res3'], features['res2']
         ):
             height = input_per_image.get("height", image_size[0])
             width = input_per_image.get("width", image_size[1])
@@ -406,6 +406,11 @@ class GeneralizedSEEM(nn.Module):
                     box_pred_result = bbox_postprocess(box_pred_result, input_size, image_size, height, width)
                 instance_r = retry_if_cuda_oom(self.instance_inference)(mask_cls_result, mask_pred_result, box_pred_result, mask_pred_emb)
                 processed_results[-1]["instances"] = instance_r
+
+            processed_results[-1]["image_features_res5"] = image_features_res5
+            processed_results[-1]["image_features_res4"] = image_features_res4
+            processed_results[-1]["image_features_res3"] = image_features_res3
+            processed_results[-1]["image_features_res2"] = image_features_res2
 
         return processed_results
 
