@@ -137,13 +137,13 @@ def train(
             step = (len(train_dataloader.dataset) // args.batch_size) * epoch + i
             lr_scheduler(step)
 
-            wandb.log({"loss": loss.item()})
+            wandb.log({"loss": loss.item(), "learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
 
             epoch_loss += loss.item() * batch[0].shape[0]
 
         epoch_loss /= len(train_dataloader.dataset)
 
-        wandb.log({"epoch_training_loss": loss, "learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
+        wandb.log({"epoch_training_loss": loss})
 
         if epoch % args.validation_epochs == 0:
             evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
@@ -299,7 +299,8 @@ def main():
     )
 
     total_steps = (len(dataset) // args.batch_size) * args.epochs
-    lr_scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+    warmup_steps = (len(dataset) // args.batch_size) * args.warmup 
+    lr_scheduler = cosine_lr(optimizer, args.lr, warmup_steps, total_steps)
 
     init_wandb(args)
     wandb.watch(vision_language_encoder, log="all")
