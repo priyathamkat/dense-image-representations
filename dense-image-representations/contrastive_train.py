@@ -129,7 +129,6 @@ def train(
             image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
             loss = contrastive_loss(text_embeddings, image_embeddings)
-            loss += contrastive_loss(image_embeddings, text_embeddings)
 
             optimizer.zero_grad()
             loss.backward()
