@@ -10,7 +10,14 @@ from torch.nn import ConstantPad2d
 import pdb
 
 class VisualAndTextTokens(Dataset):
-    def __init__(self, image_root, text_root, image_transform=None, text_transform=None, number_of_images_per_text=1, number_of_texts_per_image=5, random_sample_text=True):
+    def __init__(self, 
+                 image_root, 
+                 text_root, 
+                 image_transform=None, 
+                 text_transform=None, 
+                 number_of_images_per_text=1, 
+                 number_of_texts_per_image=5, 
+                 random_sample_text=True):
         super(VisualAndTextTokens).__init__()
         self.image_root = image_root
         self.text_root = text_root
@@ -21,6 +28,8 @@ class VisualAndTextTokens(Dataset):
         self.random_sample_text = random_sample_text
 
         saved_ids = [re.findall(r'(\d+)_(\d+)', i)[0] for i in glob.glob(f'{self.text_root}/*.pt')]
+        existing_ids = [re.findall(r'(\d+)_0', i)[0] for i in glob.glob(f'{self.image_root}/*_edge_tokens.pt')]
+        saved_ids = [i for i in saved_ids if i[0] in existing_ids]
         saved_ids_dict = {}
         for i in saved_ids:
             if i[0] not in saved_ids_dict:
@@ -30,28 +39,34 @@ class VisualAndTextTokens(Dataset):
         self.saved_ids = list(saved_ids_dict.keys())
         self.saved_ids_dict = saved_ids_dict
 
-        self.image_id_to_num_node_tokens = None
-        if os.path.exists(f'{image_root}/image_id_to_num_node_tokens.json'):
-            with open(f'{image_root}/image_id_to_num_node_tokens.json', 'r') as f:
-                self.image_id_to_num_node_tokens = json.load(f)
-
     def __len__(self):
         return len(self.saved_ids)
 
+    def get(self, idx, i):
+        node_tokens = torch.load(f'{self.image_root}/{self.saved_ids[idx]}_{i}_node_tokens.pt', map_location = 'cpu')
+        edge_tokens = torch.load(f'{self.image_root}/{self.saved_ids[idx]}_{i}_edge_tokens.pt', map_location = 'cpu')
+        image_features = torch.load(f'{self.image_root}/{self.saved_ids[idx]}_{i}_image_features.pt', map_location = 'cpu')
+        num_non_pad_tokens = node_tokens.shape[0] + edge_tokens.shape[0]
+        num_nodes = node_tokens.shape[0]
+        image_tokens = torch.cat([node_tokens, edge_tokens], dim=0)
+        
+        image_attention_mask = torch.load(f'{self.image_root}/{self.saved_ids[idx]}_{i}_attention_mask.pt', map_location = 'cpu')
+        pad = 77 - image_tokens.shape[0]
+        image_tokens = ConstantPad2d((0, 0, 0, pad), 0)(image_tokens)
+        image_attention_mask = ConstantPad2d((0, pad, 0, pad), 0)(image_attention_mask)
+
+        return image_tokens, image_features, num_non_pad_tokens, num_nodes, image_attention_mask
+
     def __getitem__(self, idx):
         if self.number_of_images_per_text == 1:
-            image_tokens = torch.load(f'{self.image_root}/{self.saved_ids[idx]}_0_tokens.pt', map_location = 'cpu')
-            image_attention_mask = torch.load(f'{self.image_root}/{self.saved_ids[idx]}_0_attention_mask.pt', map_location = 'cpu')
-            pad = 77 - image_tokens.shape[0]
-            image_tokens = ConstantPad2d((0, 0, 0, pad), 0)(image_tokens)
-            image_attention_mask = ConstantPad2d((0, pad, 0, pad), 0)(image_attention_mask)
-
+            image_tokens, image_features, num_non_pad_tokens, num_nodes, image_attention_mask = self.get(idx, 0)
+            
             if self.random_sample_text:
                 text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{random.choice(self.saved_ids_dict[self.saved_ids[idx]])}_tokens.pt', map_location = 'cpu')
             else:
                 text_tokens_list = []
                 for i in range(self.number_of_texts_per_image):
-                    text_tokens_list.append(torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{i}_tokens.pt', map_location = 'cpu'))
+                    text_tokens_list.append(torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{self.saved_ids_dict[self.saved_ids[idx]][i]}_tokens.pt', map_location = 'cpu'))
                 text_tokens = text_tokens_list
 
         else:
@@ -59,19 +74,9 @@ class VisualAndTextTokens(Dataset):
             image_attention_mask_list = []
             text_tokens_list = []
             for i in range(self.number_of_images_per_text):
-                image_tokens = torch.load(f'{self.image_root}/{self.saved_ids[idx]}_{i}_tokens.pt', map_location = 'cpu')
-                image_attention_mask = torch.load(f'{self.image_root}/{self.saved_ids[idx]}_{i}_attention_mask.pt', map_location = 'cpu')
-                pad = 77 - image_tokens.shape[0]
-                image_tokens = ConstantPad2d((0, 0, 0, pad), 0)(image_tokens)
-                image_attention_mask = ConstantPad2d((0, pad, 0, pad), 0)(image_attention_mask)
+                image_tokens, image_features, num_non_pad_tokens, num_nodes, image_attention_mask = self.get(idx, i)
 
-                text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{i}_tokens.pt', map_location = 'cpu')
-
-                if self.image_transform is not None:
-                    image_tokens = self.image_transform(image_tokens)
-                    image_attention_mask = self.image_transform(image_attention_mask)
-                if self.text_transform is not None:
-                    text_tokens = self.text_transform(text_tokens)
+                text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{self.saved_ids_dict[self.saved_ids[idx]][i]}_tokens.pt', map_location = 'cpu')
 
                 image_tokens_list.append(image_tokens)
                 image_attention_mask_list.append(image_attention_mask)
@@ -80,10 +85,7 @@ class VisualAndTextTokens(Dataset):
             image_tokens = image_tokens_list
             image_attention_mask = image_attention_mask_list
             text_tokens = text_tokens_list
-
-        if self.image_id_to_num_node_tokens is not None:
-            return image_tokens, image_attention_mask, text_tokens, self.image_id_to_num_node_tokens[self.saved_ids[idx]]
         
-        return image_tokens, image_attention_mask, text_tokens
+        return image_tokens, image_features, num_non_pad_tokens, num_nodes, image_attention_mask, text_tokens
 
     

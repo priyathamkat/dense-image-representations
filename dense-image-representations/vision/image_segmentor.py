@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 from torchvision import transforms
 from PIL import Image
 import numpy as np
@@ -108,7 +109,13 @@ class ImageSegmentor:
         sel_inst_seg.pred_masks = sel_inst_seg.pred_masks.cpu()
         sel_inst_seg.pred_boxes = BitMasks(sel_inst_seg.pred_masks > 0).get_bounding_boxes()
 
-        return sel_inst_seg
+        image_features = torch.cat([
+            nn.AvgPool2d(16)(seem_outputs[0]['image_features_res5']).squeeze(),
+            nn.AvgPool2d(32)(seem_outputs[0]['image_features_res4']).squeeze(),
+            nn.AvgPool2d(64)(seem_outputs[0]['image_features_res3']).squeeze(),
+            nn.AvgPool2d(128)(seem_outputs[0]['image_features_res2']).squeeze(),
+        ])
+        return sel_inst_seg, image_features
 
     def visualize_segmented_image(self, pil_image, inst_seg, save_path = 'inst.png'):
         """Visualizes the instance segmentation on the current image and saves it as inst.png."""
