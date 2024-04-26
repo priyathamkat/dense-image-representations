@@ -129,6 +129,7 @@ def train(
             image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
             loss = contrastive_loss(text_embeddings, image_embeddings)
+            loss += contrastive_loss(image_embeddings, text_embeddings)
 
             optimizer.zero_grad()
             loss.backward()
@@ -139,7 +140,7 @@ def train(
 
             wandb.log({"loss": loss.item()})
 
-            epoch_loss += loss.item() * text_tokens.shape[0]
+            epoch_loss += loss.item() * batch[0].shape[0]
 
         epoch_loss /= len(train_dataloader.dataset)
 
@@ -187,7 +188,7 @@ def evaluate(
         with torch.no_grad():
             image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
-            loss += contrastive_loss(text_embeddings, image_embeddings).item() * text_tokens.shape[0]
+            loss += contrastive_loss(text_embeddings, image_embeddings).item() * batch[0].shape[0]
         
        
             x1.append(image_embeddings)
@@ -234,6 +235,7 @@ def parse_args():
     parser.add_argument('--num_layers', type=int, default=6)
     parser.add_argument('--num_heads', type=int, default=8)
     parser.add_argument('--projection_dim', type=int, default=128)
+    parser.add_argument('--preembed_nodes', action='store_true')
 
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.01)
@@ -258,10 +260,7 @@ def init_wandb(args):
     wandb.init(
         name = args.exp_name,
         project="graph-clip",
-        config={
-            "learning_rate": args.lr,
-            "epochs": args.epochs,
-        },
+        config=args,
     )
 
 
@@ -273,7 +272,8 @@ def main():
                                                     transformer_width=512, 
                                                     transformer_heads=args.num_heads, 
                                                     transformer_layers=args.num_layers,
-                                                    image_embedding_size=2880)
+                                                    image_embedding_size=2880,
+                                                    preembed_nodes=args.preembed_nodes,)
 
     vision_language_encoder = vision_language_encoder.cuda()
 
@@ -303,6 +303,7 @@ def main():
     lr_scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
 
     init_wandb(args)
+    wandb.watch(vision_language_encoder, log="all")
 
     checkpoint_dir = f"results/{args.exp_name}"
     if not os.path.exists(checkpoint_dir):

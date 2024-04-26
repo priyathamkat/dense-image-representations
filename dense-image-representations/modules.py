@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from transformers import T5EncoderModel
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
+import pdb
 
 class MLP(nn.Module):
     def __init__(self, in_features, out_features, num_layers=3) -> None:
@@ -153,7 +154,7 @@ class VisionLanguageEncoder(nn.Module):
         image_embedding: torch.Tensor,
         num_non_pad_tokens: list[int],
         num_nodes: list[int],
-        image_attention_mask: torch.Tensor,
+        image_attention_mask: torch.Tensor = None,
     ):
         """Expects image_tokens to be a dictionary with three keys: 'edges', 'nodes' and 'image_embedding'.
         The shapes of the values must be the following:
@@ -197,7 +198,7 @@ class VisionLanguageEncoder(nn.Module):
             )
             x = x[:, : self.context_length, :]
         x = self.image_transformer(
-            x, mask=image_attention_mask.repeat(self.transformer_heads, 1, 1)
+            x, mask=image_attention_mask
         )
         x = self.ln_final(x)
 
@@ -210,8 +211,18 @@ class VisionLanguageEncoder(nn.Module):
     def encode_text(self, text_tokens):
         return self.text_transformer(text_tokens).last_hidden_state
 
-    def forward(self, image_tokens, image_attention_mask, text_tokens):
-        image_features = self.encode_image(image_tokens, image_attention_mask)
+    def forward(self, 
+                image_tokens,
+                image_features,
+                num_non_pad_tokens,
+                num_nodes,
+                text_tokens,
+                image_attention_mask = None):
+        image_features = self.encode_image(image_tokens,
+                                            image_features,
+                                            num_non_pad_tokens,
+                                            num_nodes,
+                                            image_attention_mask)
         text_features = self.encode_text(text_tokens)
 
         image_embeddings = self.image_projection(image_features)
