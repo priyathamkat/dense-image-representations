@@ -149,11 +149,11 @@ class VisionLanguageEncoder(nn.Module):
 
     def encode_image(
         self,
-        tokens,
-        image_embedding,
-        num_non_pad_tokens,
-        num_nodes,
-        image_attention_mask,
+        tokens: torch.Tensor,
+        image_embedding: torch.Tensor,
+        num_non_pad_tokens: list[int],
+        num_nodes: list[int],
+        image_attention_mask: torch.Tensor,
     ):
         """Expects image_tokens to be a dictionary with three keys: 'edges', 'nodes' and 'image_embedding'.
         The shapes of the values must be the following:
@@ -165,41 +165,34 @@ class VisionLanguageEncoder(nn.Module):
         """
 
         image_embedding = image_embedding.unsqueeze(1)
-        nodes = tokens[:, :num_nodes, :]
-        edges = tokens[:, num_nodes:num_non_pad_tokens, :]
-        padding = tokens[:, num_non_pad_tokens:, :]
+        max_num_nodes = max(num_nodes)
+        nodes = tokens[:, :max_num_nodes, :]
 
         if self.preembed_nodes:
-
             nodes = self.image_embedder(
                 torch.cat(
-                    [nodes, image_embedding.repeat(1, num_nodes, 1)], dim=-1
+                    [nodes, image_embedding.repeat(1, max_num_nodes, 1)], dim=-1
                 ).permute(0, 2, 1)
             ).permute(0, 2, 1)
+            for i, n in enumerate(num_nodes):
+                tokens[i, :n] = nodes[i, :n]
         else:
             image_embedding = self.image_embedder(
                 image_embedding.permute(0, 2, 1)
             ).permute(0, 2, 1)
 
-        nodes = nodes + self.positional_embeddings[NODES]
-        edges = edges + self.positional_embeddings[EDGES]
+        for i, (n, p) in enumerate(zip(num_nodes, num_non_pad_tokens)):
+            tokens[i, :n] = tokens[i, :n] + self.positional_embeddings[NODES]
+            tokens[i, n:p] = tokens[i, n:p] + self.positional_embeddings[EDGES]
 
         if self.preembed_nodes:
-            x = torch.cat(
-                [nodes, edges, padding],
-                dim=1,
-            )
+            x = tokens
         else:
             image_embedding = (
                 image_embedding + self.positional_embeddings[IMAGE_EMBEDDING]
             )
             x = torch.cat(
-                [
-                    image_embedding,
-                    nodes,
-                    edges,
-                    padding,
-                ],
+                [image_embedding, tokens],
                 dim=1,
             )
             x = x[:, : self.context_length, :]
@@ -228,9 +221,9 @@ class VisionLanguageEncoder(nn.Module):
 
 
 if __name__ == "__main__":
-    vle = VisionLanguageEncoder(16, 16, 16, 8, 6, 32, preembed_nodes=False)
-    num_nodes = 5
-    num_non_pad_tokens = 15
+    vle = VisionLanguageEncoder(16, 16, 16, 8, 6, 32, preembed_nodes=True)
+    num_nodes = [1, 2, 3, 4, 5]
+    num_non_pad_tokens = [10, 11, 12, 13, 14]
     tokens = torch.randn(5, 77, 16)
     image_embedding = torch.randn(5, 32)
     print(
