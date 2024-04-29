@@ -7,7 +7,7 @@ import torchvision.transforms as T
 import wandb
 from losses import ContrastiveLoss
 from modules import VisionLanguageEncoder
-from transformers import ViTImageProcessor, ViTModel
+from transformers import ViTImageProcessor, ViTModel, T5EncoderModel
 
 from data.coco import CocoImagesAndTextTokensForViT
 
@@ -24,7 +24,7 @@ def forward_pass(text_encoder, vit_image_encoder, batch):
     vit_inputs = batch[0].to('cuda')
     text_tokens = batch[1].cuda()
     
-    text_embeddings = text_encoder(text_tokens) 
+    text_embeddings = text_encoder(text_tokens).last_hidden_state
     image_embeddings = vit_image_encoder(**vit_inputs).last_hidden_state
 
     image_embeddings = image_embeddings.mean(dim=1)
@@ -33,8 +33,8 @@ def forward_pass(text_encoder, vit_image_encoder, batch):
     return image_embeddings, text_embeddings
 
 def train(
-    text_encoder,
-    vit_image_encoder: ViTModel,
+    text_encoder: T5EncoderModel,
+    image_encoder: ViTModel,
     optimizer: torch.optim.Optimizer,
     lr_scheduler,
     train_dataloader: DataLoader,
@@ -76,9 +76,10 @@ def train(
         epoch_loss = 0
 
         text_encoder.train()
+        image_encoder.train()
 
         for i, batch in enumerate(train_dataloader):
-            image_embeddings, text_embeddings = forward_pass(text_encoder, vit_image_encoder, batch)
+            image_embeddings, text_embeddings = forward_pass(text_encoder, image_encoder, batch)
 
             loss = contrastive_loss(text_embeddings, image_embeddings)
 
@@ -98,12 +99,12 @@ def train(
         wandb.log({"epoch_training_loss": loss})
 
         if epoch % args.validation_epochs == 0:
-            evaluate(text_encoder, vit_image_encoder, val_dataloader, contrastive_loss)
+            evaluate(text_encoder, image_encoder, val_dataloader, contrastive_loss)
 
         if epoch % args.checkpoint_epochs == 0 or epoch == args.epochs - 1:
             state = {
                 'text_encoder_state_dict': text_encoder.state_dict(), 
-                'vit_image_encoder_state_dict': vit_image_encoder.state_dict(), 
+                'vit_image_encoder_state_dict': image_encoder.state_dict(), 
                 'epoch': epoch,
                 'optimizer_state': optimizer.state_dict()
             }
@@ -253,23 +254,15 @@ def get_data_loaders(args, vit_processor):
 def main():
     args = parse_args()
 
-    vision_language_encoder = VisionLanguageEncoder(embed_dim=512,
-                                                    projection_dim=args.projection_dim, 
-                                                    transformer_width=512, 
-                                                    transformer_heads=args.num_heads, 
-                                                    transformer_layers=args.num_layers,
-                                                    image_embedding_size=2880,
-                                                    preembed_nodes=args.preembed_nodes,)
-
-    vision_language_encoder = vision_language_encoder.cuda()
+    text_encoder = T5EncoderModel.from_pretrained("google-t5/t5-small").cuda() # TODO: Change to t5-base or ... 
 
     vit_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224-in21k')
-    vit_model = ViTModel.from_pretrained('google/vit-base-patch16-224-in21k').to('cuda')
+    image_encoder = ViTModel.from_pretrained('google/vit-base-patch16-224-in21k').to('cuda')
 
     train_dataloader, val_dataloader = get_data_loaders(args, vit_processor)
 
     optimizer = torch.optim.AdamW(
-        list(vision_language_encoder.parameters()) + list(vit_model.parameters()),
+        list(text_encoder.parameters()) + list(image_encoder.parameters()),
         lr = args.lr,
         betas = (args.beta1, args.beta2),
         eps = args.eps,
@@ -280,15 +273,15 @@ def main():
     lr_scheduler = cosine_lr(optimizer, args.lr, warmup_steps, total_steps)
 
     init_wandb(args)
-    wandb.watch(vision_language_encoder, log="all")
+    wandb.watch((text_encoder, image_encoder), log="all")
 
     checkpoint_dir = f"results/{args.exp_name}"
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
 
     train(
-        vision_language_encoder,
-        vit_model,
+        text_encoder,
+        image_encoder,
         optimizer,
         lr_scheduler,
         train_dataloader,
