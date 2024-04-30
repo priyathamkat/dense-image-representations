@@ -28,11 +28,11 @@ class VisualAndTextTokens(Dataset):
         self.random_sample_text = random_sample_text
 
         saved_ids = [re.findall(r'(\d+)_(\d+)', i)[0] for i in glob.glob(f'{self.text_root}/*.pt')]
-        existing_ids = [re.findall(r'(\d+)_0', i)[0] for i in glob.glob(f'{self.image_root}/*_edge_tokens.pt')]
+        existing_ids = [re.findall(r'(\d+)_\d+', i)[0] for i in glob.glob(f'{self.image_root}/*_edge_tokens.pt')]
         saved_ids = [i for i in saved_ids if i[0] in existing_ids]
         saved_ids_dict = {}
         for i in saved_ids:
-            if i[0] not in saved_ids_dict:
+            if int(i[0]) not in saved_ids_dict:
                 saved_ids_dict[int(i[0])] = []
             saved_ids_dict[int(i[0])].append(int(i[1]))
 
@@ -70,8 +70,11 @@ class VisualAndTextTokens(Dataset):
                 text_tokens = text_tokens_list
 
         else:
-            image_tokens_list = []
-            image_attention_mask_list = []
+            image_tokens_list = [] 
+            image_features_list = [] 
+            num_non_pad_tokens_list = [] 
+            num_nodes_list = []
+            image_attention_mask_list = [] 
             text_tokens_list = []
             for i in range(self.number_of_images_per_text):
                 image_tokens, image_features, num_non_pad_tokens, num_nodes, image_attention_mask = self.get(idx, i)
@@ -79,10 +82,16 @@ class VisualAndTextTokens(Dataset):
                 text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{self.saved_ids_dict[self.saved_ids[idx]][i]}_tokens.pt', map_location = 'cpu')
 
                 image_tokens_list.append(image_tokens)
+                image_features_list.append(image_features)
+                num_non_pad_tokens_list.append(num_non_pad_tokens)
+                num_nodes_list.append(num_nodes)
                 image_attention_mask_list.append(image_attention_mask)
                 text_tokens_list.append(text_tokens)
 
             image_tokens = image_tokens_list
+            image_features = image_features_list
+            num_non_pad_tokens = num_non_pad_tokens_list
+            num_nodes = num_nodes_list
             image_attention_mask = image_attention_mask_list
             text_tokens = text_tokens_list
         

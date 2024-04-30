@@ -12,6 +12,7 @@ from modules import VisionLanguageEncoder
 from data.winoground import Winoground
 from data.tokens import VisualAndTextTokens
 
+from contrastive_train import forward_pass
 
 import pdb
 
@@ -35,6 +36,7 @@ parser.add_argument('--text_tokens', type=str, default='winoground_text_tokens')
 parser.add_argument('--num_layers', type=int, default=6)
 parser.add_argument('--num_heads', type=int, default=8)
 parser.add_argument('--projection_dim', type=int, default=128)
+parser.add_argument('--preembed_nodes', action='store_true')
 
 
 args = parser.parse_args()
@@ -52,19 +54,21 @@ vision_language_encoder = VisionLanguageEncoder(embed_dim=512,
                                                 projection_dim=args.projection_dim, 
                                                 transformer_width=512, 
                                                 transformer_heads=args.num_heads, 
-                                                transformer_layers=args.num_layers)
+                                                transformer_layers=args.num_layers,
+                                                image_embedding_size=2880,
+                                                preembed_nodes=args.preembed_nodes,)
 
 vision_language_encoder = vision_language_encoder.cuda()
 
-# ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
-ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pt'), key=os.path.getmtime, reverse=True)
+ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
+# ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pt'), key=os.path.getmtime, reverse=True)
 if len(ckpts) == 0:
     exit(f"No checkpoints found in results/{args.exp_name}")
 
 print(f"Loading state dict {ckpts[0]}")
 state = torch.load(ckpts[0])
-# vision_language_encoder.load_state_dict(state['state_dict'])
-vision_language_encoder.load_state_dict(state)
+vision_language_encoder.load_state_dict(state['state_dict'])
+# vision_language_encoder.load_state_dict(state)
 vision_language_encoder.eval()
 
 text_correct_count = 0
@@ -73,27 +77,11 @@ group_correct_count = 0
 
 total_count = 0
 for _, batch in enumerate(loader):
-    image_tokens_0 = batch[0][0].cuda()
-    image_tokens_1 = batch[0][1].cuda()
-
-    image_attention_mask_0 = batch[1][0].cuda()
-    image_attention_mask_1 = batch[1][1].cuda()
-
-    text_tokens_0 = batch[2][0].cuda()
-    text_tokens_1 = batch[2][1].cuda()
-
     with torch.no_grad():
-        image_attention_mask_0 = torch.zeros(image_tokens_0.shape[0], image_tokens_0.shape[1], image_tokens_0.shape[1]).to('cuda')
-        image_attention_mask_1 = torch.zeros(image_tokens_1.shape[0], image_tokens_1.shape[1], image_tokens_1.shape[1]).to('cuda')
-
-        with torch.no_grad():
-            image_embeddings_0, text_embeddings_0 = vision_language_encoder(image_tokens_0, image_attention_mask_0, text_tokens_0)
-            image_embeddings_1, text_embeddings_1 = vision_language_encoder(image_tokens_1, image_attention_mask_1, text_tokens_1)
-
-        image_embeddings_0 = image_embeddings_0.mean(dim=1)
-        text_embeddings_0 = text_embeddings_0.mean(dim=1)
-        image_embeddings_1 = image_embeddings_1.mean(dim=1)
-        text_embeddings_1 = text_embeddings_1.mean(dim=1)
+        batch_0 = [batch[b][0] for b in range(len(batch))]
+        batch_1 = [batch[b][1] for b in range(len(batch))]
+        image_embeddings_0, text_embeddings_0 = forward_pass(vision_language_encoder, batch_0)
+        image_embeddings_1, text_embeddings_1 = forward_pass(vision_language_encoder, batch_1)
 
         image_embeddings_0 = F.normalize(image_embeddings_0, dim=-1)
         image_embeddings_1 = F.normalize(image_embeddings_1, dim=-1)

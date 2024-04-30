@@ -159,8 +159,8 @@ if __name__ == '__main__':
             else:
                 image, image_size, image_id = images.squeeze(), image_sizes.squeeze(), image_ids.squeeze()
            
-            # if os.path.exists(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_attention_mask.pt'):
-            #     continue
+            if os.path.exists(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_edge_tokens.pt'):
+                continue
             
             # parsed_caption = json.load(open(parsed_captions[j]))
             # text_graph = text_graph_constructor(parsed_caption).cpu()
