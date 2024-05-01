@@ -29,7 +29,10 @@ def forward_pass(vision_language_encoder, batch):
     
     image_embeddings, text_embeddings = vision_language_encoder(images, text_tokens)
 
-    text_embeddings = text_embeddings.mean(dim=1)
+    if len(text_embeddings.shape) == 3:
+        text_embeddings = text_embeddings.mean(dim=1)
+
+    assert image_embeddings.shape[1] == text_embeddings.shape[1]
 
     return image_embeddings, text_embeddings
 
@@ -67,7 +70,7 @@ def train(
     if len(ckpts) > 0:
         print(f"Loading state dict {ckpts[0]}")
         state = torch.load(ckpts[0])
-        text_encoder.load_state_dict(state['state_dict'])
+        vision_language_encoder.load_state_dict(state['state_dict'])
         optimizer.load_state_dict(state['optimizer_state'])
         start_epoch = state['epoch'] + 1
 
@@ -184,7 +187,6 @@ def parse_args():
     parser.add_argument('--text_tokens_train', type=str, required=True)
     parser.add_argument('--text_tokens_val', type=str, required=True)
 
-    parser.add_argument('--projection_dim', type=int, default=128)
     parser.add_argument('--text_encoder', type=str, default='t5')
     parser.add_argument('--image_encoder', type=str, default='vit')
 
@@ -252,10 +254,7 @@ def main():
     if 'clip' in [args.image_encoder, args.text_encoder]:
         clip_model, clip_image_processor = clip.load("ViT-B/16", device='cuda')
 
-    vision_language_encoder = VisionLanguageEncoderBase(image_embed_dim=768,
-                                                        text_embed_dim=512,
-                                                        projection_dim=args.projection_dim,
-                                                        text_encoder=args.text_encoder,
+    vision_language_encoder = VisionLanguageEncoderBase(text_encoder=args.text_encoder,
                                                         image_encoder=args.image_encoder,
                                                         clip_model=clip_model,)
     vision_language_encoder = vision_language_encoder.cuda()
