@@ -52,6 +52,6 @@ class CocoImagesAndTextTokensForViT(Dataset):
 
         vit_inputs = self.vit_processor(image)
 
-        text_tokens = torch.load(f'{self.image_root}/{id}_{random.choice(self.saved_ids_dict[id])}_tokens.pt', map_location='cpu')
+        text_tokens = torch.load(f'{self.text_root}/{id}_{random.choice(self.saved_ids_dict[id])}_tokens.pt', map_location='cpu')
 
         return vit_inputs, text_tokens

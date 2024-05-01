@@ -1,13 +1,14 @@
 import argparse
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
 import torchvision.transforms as T
 import wandb
 from losses import ContrastiveLoss
-from modules import VisionLanguageEncoder
-from transformers import ViTImageProcessor, ViTModel, T5EncoderModel
+from modules import VisionLanguageEncoderBase
+from transformers import ViTImageProcessor
 
 from data.coco import CocoImagesAndTextTokensForViT
 
@@ -20,21 +21,18 @@ import pdb
 from contrastive_train import get_avg_sim, get_retrieval_score, assign_learning_rate, cosine_lr
 
 
-def forward_pass(text_encoder, vit_image_encoder, batch):
-    vit_inputs = batch[0].to('cuda')
+def forward_pass(vision_language_encoder, batch):
+    images = batch[0]['pixel_values'][0].to('cuda')
     text_tokens = batch[1].cuda()
     
-    text_embeddings = text_encoder(text_tokens).last_hidden_state
-    image_embeddings = vit_image_encoder(**vit_inputs).last_hidden_state
+    image_embeddings, text_embeddings = vision_language_encoder(images, text_tokens)
 
-    image_embeddings = image_embeddings.mean(dim=1)
     text_embeddings = text_embeddings.mean(dim=1)
 
     return image_embeddings, text_embeddings
 
 def train(
-    text_encoder: T5EncoderModel,
-    image_encoder: ViTModel,
+    vision_language_encoder: VisionLanguageEncoderBase,
     optimizer: torch.optim.Optimizer,
     lr_scheduler,
     train_dataloader: DataLoader,
@@ -75,11 +73,11 @@ def train(
     for epoch in range(start_epoch, args.epochs):
         epoch_loss = 0
 
-        text_encoder.train()
-        image_encoder.train()
+        vision_language_encoder.train()
+
 
         for i, batch in enumerate(train_dataloader):
-            image_embeddings, text_embeddings = forward_pass(text_encoder, image_encoder, batch)
+            image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
             loss = contrastive_loss(text_embeddings, image_embeddings)
 
@@ -92,19 +90,18 @@ def train(
 
             wandb.log({"loss": loss.item(), "learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
 
-            epoch_loss += loss.item() * batch[0].shape[0]
+            epoch_loss += loss.item() * batch[1].shape[0]
 
         epoch_loss /= len(train_dataloader.dataset)
 
         wandb.log({"epoch_training_loss": loss})
 
         if epoch % args.validation_epochs == 0:
-            evaluate(text_encoder, image_encoder, val_dataloader, contrastive_loss)
+            evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
 
         if epoch % args.checkpoint_epochs == 0 or epoch == args.epochs - 1:
             state = {
-                'text_encoder_state_dict': text_encoder.state_dict(), 
-                'vit_image_encoder_state_dict': image_encoder.state_dict(), 
+                'state_dict': vision_language_encoder.state_dict(), 
                 'epoch': epoch,
                 'optimizer_state': optimizer.state_dict()
             }
@@ -115,8 +112,7 @@ def train(
 
 
 def evaluate(
-    text_encoder,
-    vit_image_encoder,
+    vision_language_encoder,
     val_dataloader: DataLoader,
     contrastive_loss: ContrastiveLoss, 
 ):
@@ -135,17 +131,16 @@ def evaluate(
         None
     """
 
-    text_encoder.eval()
-    vit_image_encoder.eval()
+    vision_language_encoder.eval()
 
     loss = 0
     x1 = []
     x2 = []
     for batch in val_dataloader:
         with torch.no_grad():
-            image_embeddings, text_embeddings = forward_pass(text_encoder, vit_image_encoder, batch)
+            image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
-            loss += contrastive_loss(text_embeddings, image_embeddings).item() * batch[0].shape[0]
+            loss += contrastive_loss(text_embeddings, image_embeddings).item() * batch[1].shape[0]
         
        
             x1.append(image_embeddings)
@@ -184,13 +179,9 @@ def parse_args():
 
     parser.add_argument('--exp_name', type=str, required=True)
 
-    parser.add_argument('--vision_tokens_train', type=str, required=True)
-    parser.add_argument('--vision_tokens_val', type=str, required=True)
     parser.add_argument('--text_tokens_train', type=str, required=True)
     parser.add_argument('--text_tokens_val', type=str, required=True)
 
-    parser.add_argument('--num_layers', type=int, default=6)
-    parser.add_argument('--num_heads', type=int, default=8)
     parser.add_argument('--projection_dim', type=int, default=128)
     parser.add_argument('--preembed_nodes', action='store_true')
 
@@ -232,7 +223,7 @@ def get_data_loaders(args, vit_processor):
         image_root='/fs/cml-datasets/coco/images/val2017/',
         image_annFile='/fs/cml-datasets/coco/annotations/captions_val2017.json',
         vit_processor=vit_processor,
-        text_root=args.text_tokens_train
+        text_root=args.text_tokens_val
     )
 
     train_dataloader = DataLoader(
@@ -253,16 +244,16 @@ def get_data_loaders(args, vit_processor):
 
 def main():
     args = parse_args()
-
-    text_encoder = T5EncoderModel.from_pretrained("google-t5/t5-small").cuda() # TODO: Change to t5-base or ... 
+    
+    vision_language_encoder = VisionLanguageEncoderBase(image_embed_dim=768, text_embed_dim=512, projection_dim=args.projection_dim)
+    vision_language_encoder = vision_language_encoder.cuda()
+    vision_language_encoder = nn.DataParallel(vision_language_encoder)
 
     vit_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224-in21k')
-    image_encoder = ViTModel.from_pretrained('google/vit-base-patch16-224-in21k').to('cuda')
-
     train_dataloader, val_dataloader = get_data_loaders(args, vit_processor)
 
     optimizer = torch.optim.AdamW(
-        list(text_encoder.parameters()) + list(image_encoder.parameters()),
+        vision_language_encoder.parameters(),
         lr = args.lr,
         betas = (args.beta1, args.beta2),
         eps = args.eps,
@@ -273,15 +264,14 @@ def main():
     lr_scheduler = cosine_lr(optimizer, args.lr, warmup_steps, total_steps)
 
     init_wandb(args)
-    wandb.watch((text_encoder, image_encoder), log="all")
+    wandb.watch(vision_language_encoder, log="all")
 
     checkpoint_dir = f"results/{args.exp_name}"
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
 
     train(
-        text_encoder,
-        image_encoder,
+        vision_language_encoder,
         optimizer,
         lr_scheduler,
         train_dataloader,

@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from transformers import T5EncoderModel
+from transformers import T5EncoderModel, ViTModel
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 import pdb
@@ -231,6 +231,49 @@ class VisionLanguageEncoder(nn.Module):
         return image_embeddings, text_embeddings
 
 
+
+class VisionLanguageEncoderBase(nn.Module):
+    def __init__(
+        self,
+        image_embed_dim: int,
+        text_embed_dim: int,
+        projection_dim: int,
+    ):
+        super().__init__()
+
+        self.image_encoder = ViTModel.from_pretrained('google/vit-base-patch16-224-in21k').to('cuda')
+
+        self.text_transformer = T5EncoderModel.from_pretrained("google-t5/t5-small")
+
+        self.image_projection = ProjectionHead(
+            embedding_dim=image_embed_dim, projection_dim=projection_dim, dropout=0.1
+        )
+        self.text_projection = ProjectionHead(
+            embedding_dim=text_embed_dim, projection_dim=projection_dim, dropout=0.1
+        )
+
+    def encode_image(
+        self,
+        images,
+    ):
+        x = self.image_encoder(images).pooler_output
+        return x
+
+    def encode_text(self, text_tokens):
+        return self.text_transformer(text_tokens).last_hidden_state
+
+    def forward(self, 
+                images,
+                text_tokens,):
+        image_features = self.encode_image(images)
+        text_features = self.encode_text(text_tokens)
+
+        image_embeddings = self.image_projection(image_features)
+        text_embeddings = self.text_projection(text_features)
+
+        return image_embeddings, text_embeddings
+
+    
 if __name__ == "__main__":
     vle = VisionLanguageEncoder(16, 16, 16, 8, 6, 32, preembed_nodes=True)
     num_nodes = [1, 2, 3, 4, 5]
