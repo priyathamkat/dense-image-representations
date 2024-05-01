@@ -12,6 +12,8 @@ from transformers import ViTImageProcessor
 
 from data.coco import CocoImagesAndTextTokensForViT
 
+import clip
+
 import os
 from PIL import Image
 import numpy as np
@@ -183,7 +185,8 @@ def parse_args():
     parser.add_argument('--text_tokens_val', type=str, required=True)
 
     parser.add_argument('--projection_dim', type=int, default=128)
-    parser.add_argument('--preembed_nodes', action='store_true')
+    parser.add_argument('--text_encoder', type=str, default='t5')
+    parser.add_argument('--image_encoder', type=str, default='vit')
 
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.01)
@@ -245,12 +248,25 @@ def get_data_loaders(args, vit_processor):
 def main():
     args = parse_args()
     
-    vision_language_encoder = VisionLanguageEncoderBase(image_embed_dim=768, text_embed_dim=512, projection_dim=args.projection_dim)
+    clip_model = None
+    if 'clip' in [args.image_encoder, args.text_encoder]:
+        clip_model, clip_image_processor = clip.load("ViT-B/16", device='cuda')
+
+    vision_language_encoder = VisionLanguageEncoderBase(image_embed_dim=768,
+                                                        text_embed_dim=512,
+                                                        projection_dim=args.projection_dim,
+                                                        text_encoder=args.text_encoder,
+                                                        image_encoder=args.image_encoder,
+                                                        clip_model=clip_model,)
     vision_language_encoder = vision_language_encoder.cuda()
     vision_language_encoder = nn.DataParallel(vision_language_encoder)
 
-    vit_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224-in21k')
-    train_dataloader, val_dataloader = get_data_loaders(args, vit_processor)
+    if args.image_encoder == 'vit':
+        image_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224-in21k')
+    else:
+        image_processor = clip_image_processor
+
+    train_dataloader, val_dataloader = get_data_loaders(args, image_processor)
 
     optimizer = torch.optim.AdamW(
         vision_language_encoder.parameters(),

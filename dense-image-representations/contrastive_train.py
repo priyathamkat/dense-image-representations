@@ -13,6 +13,7 @@ import os
 import numpy as np
 import glob
 import pdb
+import clip
 
 def get_avg_sim(sim_matrix):
     eye = torch.eye(sim_matrix.shape[0], device = sim_matrix.device).bool()
@@ -75,9 +76,12 @@ def forward_pass(vision_language_encoder, batch):
                                                                 num_nodes,
                                                                 text_tokens,
                                                                 )
+    if len(image_embeddings.shape) == 3:
+        image_embeddings = image_embeddings.mean(dim=1)
+    if len(text_embeddings.shape) == 3:
+        text_embeddings = text_embeddings.mean(dim=1)
 
-    image_embeddings = image_embeddings.mean(dim=1)
-    text_embeddings = text_embeddings.mean(dim=1)
+    assert image_embeddings.shape[1] == text_embeddings.shape[1]
 
     return image_embeddings, text_embeddings
 
@@ -233,8 +237,8 @@ def parse_args():
 
     parser.add_argument('--num_layers', type=int, default=6)
     parser.add_argument('--num_heads', type=int, default=8)
-    parser.add_argument('--projection_dim', type=int, default=128)
     parser.add_argument('--preembed_nodes', action='store_true')
+    parser.add_argument('--text_encoder', type=str, default='t5')
 
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.01)
@@ -266,13 +270,17 @@ def init_wandb(args):
 def main():
     args = parse_args()
 
-    vision_language_encoder = VisionLanguageEncoder(embed_dim=512,
-                                                    projection_dim=args.projection_dim, 
-                                                    transformer_width=512, 
+    clip_model = None
+    if args.text_encoder == 'clip':
+        clip_model, _ = clip.load("ViT-B/16", device='cuda')
+
+    vision_language_encoder = VisionLanguageEncoder(transformer_width=512, 
                                                     transformer_heads=args.num_heads, 
                                                     transformer_layers=args.num_layers,
                                                     image_embedding_size=2880,
-                                                    preembed_nodes=args.preembed_nodes,)
+                                                    preembed_nodes=args.preembed_nodes,
+                                                    text_encoder=args.text_encoder,
+                                                    clip_model=clip_model,)
 
     vision_language_encoder = vision_language_encoder.cuda()
 
