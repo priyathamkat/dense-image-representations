@@ -3,14 +3,30 @@ import os
 import pdb
 import torch
 import argparse
+import clip
 from transformers import AutoTokenizer
+
+def tokenize(captions, tokenizer_type, tokenizer=None):
+    tokens = None
+    if tokenizer_type == 'clip':
+        tokens = clip.tokenize(captions).squeeze().cpu()
+    else:
+        tokens = tokenizer(captions, return_tensors="pt", padding='max_length', max_length=77, truncation=True).input_ids.squeeze().cpu()
+    return tokens
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='coco')
+parser.add_argument('--tokenizer_type', type=str, default='clip')
 
 args = parser.parse_args()
 
-tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-small")
+tokenizer = None
+if args.tokenizer_type == 't5_small':
+    tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-small")
+elif args.tokenizer_type == 't5_base':
+    tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
+
 dataset = args.dataset
 
 save_path = f'{dataset}_text_tokens'
@@ -28,9 +44,10 @@ if 'coco' in dataset and 'aro' not in dataset:
         image_id = sam['image_id']
         cap_id = sam['id']
         caption = sam['caption']
-        tokens = tokenizer(caption, return_tensors="pt", padding='max_length', max_length=77, truncation=True).input_ids.squeeze().cpu()
+        tokens = tokenize(caption, args.tokenizer_type, tokenizer)
         
-        torch.save(tokens, f'{save_path}/{image_id}_{cap_id}_tokens.pt')
+        torch.save(tokens, f'{save_path}/{image_id}_{cap_id}_{args.tokenizer_type}_tokens.pt')
+        os.chmod(f'{save_path}/{image_id}_{cap_id}_{args.tokenizer_type}_tokens.pt', 0o0777)
 
 elif dataset == 'winoground':
     from datasets import load_dataset
@@ -43,11 +60,14 @@ elif dataset == 'winoground':
         caption_0 = data[i]['caption_0']
         caption_1 = data[i]['caption_1']
 
-        tokens_0 = tokenizer(caption_0, return_tensors="pt", padding='max_length', max_length=77, truncation=True).input_ids.squeeze().cpu()    
-        tokens_1 = tokenizer(caption_1, return_tensors="pt", padding='max_length', max_length=77, truncation=True).input_ids.squeeze().cpu()    
+        tokens_0 = tokenize(caption_0, args.tokenizer_type, tokenizer)   
+        tokens_1 = tokenize(caption_1, args.tokenizer_type, tokenizer)  
 
-        torch.save(tokens_0, f'{save_path}/{image_id}_0_tokens.pt')
-        torch.save(tokens_1, f'{save_path}/{image_id}_1_tokens.pt')
+        torch.save(tokens_0, f'{save_path}/{image_id}_0_{args.tokenizer_type}_tokens.pt')
+        torch.save(tokens_1, f'{save_path}/{image_id}_1_{args.tokenizer_type}_tokens.pt')
+
+        os.chmod(f'{save_path}/{image_id}_0_{args.tokenizer_type}_tokens.pt', 0o0777)
+        os.chmod(f'{save_path}/{image_id}_1_{args.tokenizer_type}_tokens.pt', 0o0777)
 
 
 elif 'aro' in dataset:
@@ -68,9 +88,11 @@ elif 'aro' in dataset:
 
     for i in range(len(data)):
         caption_options = data[i]['caption_options']
-        tokens = tokenizer(caption_options, return_tensors="pt", padding='max_length', max_length=77, truncation=True).input_ids.squeeze().cpu()
+        tokens = tokenize(caption_options, args.tokenizer_type, tokenizer)
 
         for j in range(len(caption_options)):
-            torch.save(tokens[j], f'{save_path}/{i}_{j}_tokens.pt')
+            torch.save(tokens[j], f'{save_path}/{i}_{j}_{args.tokenizer_type}_tokens.pt')
+            
+            os.chmod(f'{save_path}/{i}_{j}_{args.tokenizer_type}_tokens.pt', 0o0777)
 
         

@@ -3,16 +3,22 @@ import glob
 import os
 
 import torch
+import torch.nn as nn
 from torchvision import transforms
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-from modules import VisionLanguageEncoder
+import clip
 
-from data.winoground import Winoground
+from transformers import ViTImageProcessor
+
+from modules import VisionLanguageEncoder, VisionLanguageEncoderBase
+
+from data.winoground import WinogroundImagesAndCaptionTokens
 from data.tokens import VisualAndTextTokens
 
 from contrastive_train import forward_pass
+from contrastive_train_baseline import forward_pass as forward_pass_base
 
 import pdb
 
@@ -28,7 +34,7 @@ def group_correct(result, index):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--exp_name', type=str, required=True)
-parser.add_argument('--batch_size', type=int, default=512)
+parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--num_workers', type=int, default=16)
 parser.add_argument('--vision_tokens', type=str, default='winoground_visual_tokens')
 parser.add_argument('--text_tokens', type=str, default='winoground_text_tokens')
@@ -38,10 +44,49 @@ parser.add_argument('--num_heads', type=int, default=8)
 parser.add_argument('--projection_dim', type=int, default=128)
 parser.add_argument('--preembed_nodes', action='store_true')
 
+parser.add_argument('--text_encoder', type=str, default='t5')
+parser.add_argument('--image_encoder', type=str, default='vit')
+
 
 args = parser.parse_args()
 
-dataset = VisualAndTextTokens(image_root=args.vision_tokens, text_root=args.text_tokens, number_of_images_per_text=2)
+clip_model = None
+if 'clip' in [args.image_encoder, args.text_encoder]:
+    clip_model, clip_image_processor = clip.load("ViT-B/16", device='cuda')
+    clip_model = clip_model.to(torch.float32)
+
+if 'baseline' in args.exp_name:
+    vision_language_encoder = VisionLanguageEncoderBase(projection_dim=args.projection_dim,
+                                                        text_encoder=args.text_encoder,
+                                                        image_encoder=args.image_encoder,
+                                                        clip_model=clip_model,)
+
+    if args.image_encoder == 'vit':
+        image_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224-in21k')
+    else:
+        image_processor = clip_image_processor
+
+    dataset = WinogroundImagesAndCaptionTokens(root='/cmlscratch/nehamk/datasets/winoground',
+                                                text_tokens_root=args.text_tokens,
+                                                vit_processor=image_processor,
+                                                text_tokenizer_type=args.text_encoder)
+    forward_pass = forward_pass_base
+
+else:
+    dataset = VisualAndTextTokens(image_root=args.vision_tokens,
+                                    text_root=args.text_tokens,
+                                    number_of_images_per_text=2,
+                                    text_tokenizer_type=args.text_encoder)
+
+    vision_language_encoder = VisionLanguageEncoder(projection_dim=args.projection_dim,
+                                                    transformer_width=512, 
+                                                    transformer_heads=args.num_heads, 
+                                                    transformer_layers=args.num_layers,
+                                                    image_embedding_size=2880,
+                                                    preembed_nodes=args.preembed_nodes,
+                                                    text_encoder=args.text_encoder,
+                                                    clip_model=clip_model,)
+
 
 loader = DataLoader(
     dataset,
@@ -50,25 +95,17 @@ loader = DataLoader(
     num_workers=args.num_workers,
 )
 
-vision_language_encoder = VisionLanguageEncoder(embed_dim=512,
-                                                projection_dim=args.projection_dim, 
-                                                transformer_width=512, 
-                                                transformer_heads=args.num_heads, 
-                                                transformer_layers=args.num_layers,
-                                                image_embedding_size=2880,
-                                                preembed_nodes=args.preembed_nodes,)
-
 vision_language_encoder = vision_language_encoder.cuda()
+if 'baseline' in args.exp_name:
+    vision_language_encoder = nn.DataParallel(vision_language_encoder)
 
-ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
-# ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pt'), key=os.path.getmtime, reverse=True)
-if len(ckpts) == 0:
-    exit(f"No checkpoints found in results/{args.exp_name}")
+# ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
+# if len(ckpts) == 0:
+#     exit(f"No checkpoints found in results/{args.exp_name}")
 
-print(f"Loading state dict {ckpts[0]}")
-state = torch.load(ckpts[0])
-vision_language_encoder.load_state_dict(state['state_dict'])
-# vision_language_encoder.load_state_dict(state)
+# print(f"Loading state dict {ckpts[0]}")
+# state = torch.load(ckpts[0])
+# vision_language_encoder.load_state_dict(state['state_dict'])
 vision_language_encoder.eval()
 
 text_correct_count = 0

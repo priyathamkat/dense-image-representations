@@ -9,14 +9,20 @@ from torch.nn import ConstantPad2d
 
 import pdb
 
+text_tokenizer_type_str = {
+    't5_small': '',
+    't5_base': '_t5_base',
+    'clip': '_clip'
+}
+
 class VisualAndTextTokens(Dataset):
     def __init__(self, 
                  image_root, 
                  text_root, 
                  image_transform=None, 
                  text_transform=None, 
-                 number_of_images_per_text=1, 
-                 number_of_texts_per_image=5, 
+                 number_of_images_per_text=1,
+                 text_tokenizer_type='t5_small',
                  random_sample_text=True):
         super(VisualAndTextTokens).__init__()
         self.image_root = image_root
@@ -24,12 +30,12 @@ class VisualAndTextTokens(Dataset):
         self.image_transform = image_transform
         self.text_transform = text_transform
         self.number_of_images_per_text = number_of_images_per_text
-        self.number_of_texts_per_image = number_of_texts_per_image
         self.random_sample_text = random_sample_text
 
-        saved_ids = [re.findall(r'(\d+)_(\d+)', i)[0] for i in glob.glob(f'{self.text_root}/*.pt')]
-        existing_ids = [re.findall(r'(\d+)_\d+', i)[0] for i in glob.glob(f'{self.image_root}/*_edge_tokens.pt')]
-        saved_ids = [i for i in saved_ids if i[0] in existing_ids]
+        self.text_tokenizer_str = text_tokenizer_type_str[text_tokenizer_type]
+        saved_ids = [re.findall(r'(\d+)_(\d+)', i)[0] for i in sorted(glob.glob(f'{self.text_root}/*{self.text_tokenizer_str}_tokens.pt'))]
+        # existing_ids = [re.findall(r'(\d+)_\d+', i)[0] for i in glob.glob(f'{self.image_root}/*_edge_tokens.pt')]
+        # saved_ids = [i for i in saved_ids if i[0] in existing_ids]
         saved_ids_dict = {}
         for i in saved_ids:
             if int(i[0]) not in saved_ids_dict:
@@ -62,11 +68,11 @@ class VisualAndTextTokens(Dataset):
             image_tokens, image_features, num_non_pad_tokens, num_nodes, image_attention_mask = self.get(idx, 0)
             
             if self.random_sample_text:
-                text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{random.choice(self.saved_ids_dict[self.saved_ids[idx]])}_tokens.pt', map_location = 'cpu')
+                text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{random.choice(self.saved_ids_dict[self.saved_ids[idx]])}{self.text_tokenizer_str}_tokens.pt', map_location = 'cpu')
             else:
                 text_tokens_list = []
-                for i in range(self.number_of_texts_per_image):
-                    text_tokens_list.append(torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{self.saved_ids_dict[self.saved_ids[idx]][i]}_tokens.pt', map_location = 'cpu'))
+                for text_id in self.saved_ids_dict[self.saved_ids[idx]]:
+                    text_tokens_list.append(torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{text_id}{self.text_tokenizer_str}_tokens.pt', map_location = 'cpu'))
                 text_tokens = text_tokens_list
 
         else:
@@ -79,7 +85,7 @@ class VisualAndTextTokens(Dataset):
             for i in range(self.number_of_images_per_text):
                 image_tokens, image_features, num_non_pad_tokens, num_nodes, image_attention_mask = self.get(idx, i)
 
-                text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{self.saved_ids_dict[self.saved_ids[idx]][i]}_tokens.pt', map_location = 'cpu')
+                text_tokens = torch.load(f'{self.text_root}/{self.saved_ids[idx]}_{self.saved_ids_dict[self.saved_ids[idx]][i]}{self.text_tokenizer_str}_tokens.pt', map_location = 'cpu')
 
                 image_tokens_list.append(image_tokens)
                 image_features_list.append(image_features)

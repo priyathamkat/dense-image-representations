@@ -237,8 +237,9 @@ def parse_args():
 
     parser.add_argument('--num_layers', type=int, default=6)
     parser.add_argument('--num_heads', type=int, default=8)
+    parser.add_argument('--projection_dim', type=int, default=512)
     parser.add_argument('--preembed_nodes', action='store_true')
-    parser.add_argument('--text_encoder', type=str, default='t5')
+    parser.add_argument('--text_encoder', type=str, default='t5_small')
 
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.01)
@@ -273,8 +274,10 @@ def main():
     clip_model = None
     if args.text_encoder == 'clip':
         clip_model, _ = clip.load("ViT-B/16", device='cuda')
+        clip_model = clip_model.to(torch.float32)
 
-    vision_language_encoder = VisionLanguageEncoder(transformer_width=512, 
+    vision_language_encoder = VisionLanguageEncoder(projection_dim=args.projection_dim,
+                                                    transformer_width=512, 
                                                     transformer_heads=args.num_heads, 
                                                     transformer_layers=args.num_layers,
                                                     image_embedding_size=2880,
@@ -284,8 +287,8 @@ def main():
 
     vision_language_encoder = vision_language_encoder.cuda()
 
-    dataset = VisualAndTextTokens(image_root=args.vision_tokens_train, text_root=args.text_tokens_train)
-    val_dataset = VisualAndTextTokens(image_root=args.vision_tokens_val, text_root=args.text_tokens_val)
+    dataset = VisualAndTextTokens(image_root=args.vision_tokens_train, text_root=args.text_tokens_train, text_tokenizer_type=args.text_encoder)
+    val_dataset = VisualAndTextTokens(image_root=args.vision_tokens_val, text_root=args.text_tokens_val, text_tokenizer_type=args.text_encoder)
     train_dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,

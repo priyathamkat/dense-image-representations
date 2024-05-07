@@ -24,7 +24,7 @@ from contrastive_train import get_avg_sim, get_retrieval_score, assign_learning_
 
 
 def forward_pass(vision_language_encoder, batch):
-    images = batch[0]['pixel_values'][0].to('cuda')
+    images = batch[0].to('cuda')
     text_tokens = batch[1].cuda()
     
     image_embeddings, text_embeddings = vision_language_encoder(images, text_tokens)
@@ -187,8 +187,9 @@ def parse_args():
     parser.add_argument('--text_tokens_train', type=str, required=True)
     parser.add_argument('--text_tokens_val', type=str, required=True)
 
-    parser.add_argument('--text_encoder', type=str, default='t5')
+    parser.add_argument('--text_encoder', type=str, default='t5_small')
     parser.add_argument('--image_encoder', type=str, default='vit')
+    parser.add_argument('--projection_dim', type=int, default=512)
 
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.01)
@@ -222,13 +223,15 @@ def get_data_loaders(args, vit_processor):
         image_root='/fs/cml-datasets/coco/images/train2017/',
         image_annFile='/fs/cml-datasets/coco/annotations/captions_train2017.json',
         vit_processor=vit_processor,
-        text_root=args.text_tokens_train
+        text_root=args.text_tokens_train,
+        text_tokenizer_type=args.text_encoder
     )
     val_dataset = CocoImagesAndTextTokensForViT(
         image_root='/fs/cml-datasets/coco/images/val2017/',
         image_annFile='/fs/cml-datasets/coco/annotations/captions_val2017.json',
         vit_processor=vit_processor,
-        text_root=args.text_tokens_val
+        text_root=args.text_tokens_val,
+        text_tokenizer_type=args.text_encoder
     )
 
     train_dataloader = DataLoader(
@@ -253,8 +256,10 @@ def main():
     clip_model = None
     if 'clip' in [args.image_encoder, args.text_encoder]:
         clip_model, clip_image_processor = clip.load("ViT-B/16", device='cuda')
+        clip_model = clip_model.to(torch.float32)
 
-    vision_language_encoder = VisionLanguageEncoderBase(text_encoder=args.text_encoder,
+    vision_language_encoder = VisionLanguageEncoderBase(projection_dim=args.projection_dim,
+                                                        text_encoder=args.text_encoder,
                                                         image_encoder=args.image_encoder,
                                                         clip_model=clip_model,)
     vision_language_encoder = vision_language_encoder.cuda()

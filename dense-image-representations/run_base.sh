@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=2565e-05
-#SBATCH --output results/coco-256-5e-05-100-clip-clip_base/train.log
-#SBATCH --error results/coco-256-5e-05-100-clip-clip_base/train.log
+#SBATCH --output results/clip-clip_baseline/train.log
+#SBATCH --error results/clip-clip_baseline/train.log
 #SBATCH --time=71:00:00
-#SBATCH --gres=gpu:rtxa5000:2
+#SBATCH --gres=gpu:rtxa5000:4
 #SBATCH --qos=scavenger
 #SBATCH --account=scavenger
 #SBATCH --partition=scavenger
@@ -18,7 +18,8 @@ python3 contrastive_train_baseline.py \
 --warmup 10 \
 --validation_epochs 5 \
 --checkpoint_epochs 20 \
+--projection_dim 512 \
 --image_encoder clip \
 --text_encoder clip \
 --lr 5e-05 \
---exp_name coco-256-5e-05-100-clip-clip_base \
+--exp_name clip-clip_baseline \
