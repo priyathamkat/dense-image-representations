@@ -1,29 +1,63 @@
 import argparse 
 import glob
 import os
+import pandas as pd
+import numpy as np
 
 import pdb
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
 
 import clip
-
 from transformers import ViTImageProcessor
 
-from data.tokens import VisualAndTextTokens
-from data.aro import AROImagesAndCaptionTokens
+from data.datautils import get_dataset
+import utils
 from modules import VisionLanguageEncoder, VisionLanguageEncoderBase
-from contrastive_train import forward_pass
-from contrastive_train_baseline import forward_pass as forward_pass_base
 
-TEXTS_PER_IMAGE = {
-    'aro_vgr': 2, 
-    'aro_vga': 2,
-    'aro_coco_order': 5
-}
+@torch.no_grad()
+def get_retrieval_scores_batched(model, tokenizer, joint_loader, args):
+    """Computes the scores for each image_option / caption_option pair in the joint loader.
+
+    Args:
+        joint_loader (DataLoader): batches have "image_options" and "caption_options" fields.
+        "image_options" is a list of images, and "caption_options" is a list of captions.
+
+    Returns:
+        all_scores: A numpy array containing the scores of the shape NxKxL,
+        where N is the number of test cases, K is the number of image options per the test case,
+        and L is the number of caption options per the test case.
+    """
+    scores = []
+    for _, batch in enumerate(joint_loader):
+        if 'baseline' not in args.exp_name:
+            image_embeddings = model.encode_image(batch['image_tokens'].cuda(),
+                                                    batch['image_features'].cuda(),
+                                                    batch['num_non_pad_tokens'].cuda(),
+                                                    batch['num_nodes'].cuda())
+            image_embeddings = image_embeddings.mean(dim=1).cpu().numpy()
+        else:
+            image_embeddings = model.encode_image(batch['images'].cuda()).cpu().numpy() # B x D
+
+        image_embeddings = image_embeddings / np.linalg.norm(image_embeddings, axis=1, keepdims=True) # B x D
+        image_options = np.expand_dims(image_embeddings, axis=1) # B x K x D
+        
+        caption_options = []
+        for c_option in batch["captions"]:
+            caption_tokenized = utils.tokenize(c_option, tokenizer, args.text_encoder).view(-1, 77)
+            caption_embeddings = model.encode_text(caption_tokenized.cuda()).cpu().numpy() # B x D
+            caption_embeddings = caption_embeddings / np.linalg.norm(caption_embeddings, axis=1, keepdims=True) # B x D
+            caption_options.append(np.expand_dims(caption_embeddings, axis=1))
+        
+        caption_options = np.concatenate(caption_options, axis=1) # B x L x D
+        batch_scores = np.einsum("nkd,nld->nkl", image_options, caption_options) # B x K x L
+        scores.append(batch_scores)
+    
+    all_scores = np.concatenate(scores, axis=0) # N x K x L
+    return all_scores
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--exp_name', type=str, required=True)
@@ -44,7 +78,7 @@ args = parser.parse_args()
 
 clip_model = None
 if 'clip' in [args.image_encoder, args.text_encoder]:
-    clip_model, clip_image_processor = clip.load("ViT-B/16", device='cuda')
+    clip_model, clip_image_processor = clip.load("ViT-B/32", device='cuda')
     clip_model = clip_model.to(torch.float32)
 
 if 'baseline' in args.exp_name:
@@ -58,19 +92,20 @@ if 'baseline' in args.exp_name:
     else:
         image_processor = clip_image_processor
 
-    dataset = AROImagesAndCaptionTokens(root='/cmlscratch/nehamk/datasets/aro',
-                                        text_tokens_root=f"{args.dataset}_text_tokens",
-                                        vit_processor=image_processor,
-                                        task=args.dataset,
-                                        text_tokenizer_type=args.text_encoder)
-    forward_pass = forward_pass_base
+    dataset = get_dataset(
+        dataset_name = args.dataset,
+        transform = image_processor,
+        with_image_tokens = False, 
+        caption_return_policy = 'all'
+    )
 
 else:
-    dataset = VisualAndTextTokens(image_root=f"{args.dataset}_visual_tokens",
-                                    text_root=f"{args.dataset}_text_tokens", 
-                                    number_of_images_per_text=1,
-                                    random_sample_text=False,
-                                    text_tokenizer_type=args.text_encoder)
+    dataset = get_dataset(
+        dataset_name = args.dataset,
+        image_tokens_root = f'{args.dataset}_visual_tokens',
+        with_image_tokens = True, 
+        caption_return_policy = 'all'
+    )
 
     vision_language_encoder = VisionLanguageEncoder(projection_dim=args.projection_dim,
                                                     transformer_width=512, 
@@ -84,7 +119,7 @@ else:
 loader = DataLoader(
     dataset,
     batch_size=args.batch_size,
-    shuffle=True,
+    shuffle=False,
     num_workers=args.num_workers,
 )
 
@@ -92,40 +127,44 @@ vision_language_encoder = vision_language_encoder.cuda()
 if 'baseline' in args.exp_name:
     vision_language_encoder = nn.DataParallel(vision_language_encoder)
 
-# ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
-# # ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pt'), key=os.path.getmtime, reverse=True)
-# if len(ckpts) == 0:
-#     exit(f"No checkpoints found in results/{args.exp_name}")
+ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
+if len(ckpts) == 0:
+    print(f"No checkpoints found in results/{args.exp_name}")
+else:
+    print(f"Loading state dict {ckpts[0]}")
+    state = torch.load(ckpts[0])
+    vision_language_encoder.load_state_dict(state['state_dict'])
 
-# print(f"Loading state dict {ckpts[0]}")
-# state = torch.load(ckpts[0])
-# vision_language_encoder.load_state_dict(state['state_dict'])
-# # vision_language_encoder.load_state_dict(state)
+if 'baseline' in args.exp_name:
+    vision_language_encoder = vision_language_encoder.module
 vision_language_encoder.eval()
 
-correct = 0
-total_count = 0
-for _, batch in enumerate(loader):
-    batch[-1] = torch.cat(batch[-1]) # multiple captions per image
-    with torch.no_grad():
-        image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
+tokenizer = utils.get_tokenizer(args.text_encoder)
 
-    image_embeddings = F.normalize(image_embeddings, dim=-1)
-    text_embeddings = F.normalize(text_embeddings, dim=-1)
+scores = get_retrieval_scores_batched(model = vision_language_encoder,
+                                        tokenizer = tokenizer,
+                                        joint_loader = loader,
+                                        args=args)
 
-    num_captions_per_image = text_embeddings.shape[0] // image_embeddings.shape[0]
+records = dataset.evaluate_scores(scores)
 
-    for i in range(image_embeddings.shape[0]):
-        image_embedding = image_embeddings[i]
-        caption_embeddings = torch.cat([text_embeddings[i + j * image_embeddings.shape[0]].unsqueeze(0) for j in range(num_captions_per_image)])
-        scores = caption_embeddings @ image_embedding
-        if 'coco_order' not in args.dataset:
-            correct += (scores.argmax() == 1).int().item()
-        else:    
-            correct += (scores.argmax() == 0).int().item()
-        total_count += 1
+if 'vgr' in args.dataset:
+    vgr_records = records
+    symmetric = ['adjusting', 'attached to', 'between', 'bigger than', 'biting', 'boarding', 'brushing', 'chewing', 'cleaning', 'climbing', 'close to', 'coming from', 'coming out of', 'contain', 'crossing', 'dragging', 'draped over', 'drinking', 'drinking from', 'driving', 'driving down', 'driving on', 'eating from', 'eating in', 'enclosing', 'exiting', 'facing', 'filled with', 'floating in', 'floating on', 'flying', 'flying above', 'flying in', 'flying over', 'flying through', 'full of', 'going down', 'going into', 'going through', 'grazing in', 'growing in', 'growing on', 'guiding', 'hanging from', 'hanging in', 'hanging off', 'hanging over', 'higher than', 'holding onto', 'hugging', 'in between', 'jumping off', 'jumping on', 'jumping over', 'kept in', 'larger than', 'leading', 'leaning over', 'leaving', 'licking', 'longer than', 'looking in', 'looking into', 'looking out', 'looking over', 'looking through', 'lying next to', 'lying on top of', 'making', 'mixed with', 'mounted on', 'moving', 'on the back of', 'on the edge of', 'on the front of', 'on the other side of', 'opening', 'painted on', 'parked at', 'parked beside', 'parked by', 'parked in', 'parked in front of', 'parked near', 'parked next to', 'perched on', 'petting', 'piled on', 'playing', 'playing in', 'playing on', 'playing with', 'pouring', 'reaching for', 'reading', 'reflected on', 'riding on', 'running in', 'running on', 'running through', 'seen through', 'sitting behind', 'sitting beside', 'sitting by', 'sitting in front of', 'sitting near', 'sitting next to', 'sitting under', 'skiing down', 'skiing on', 'sleeping in', 'sleeping on', 'smiling at', 'sniffing', 'splashing', 'sprinkled on', 'stacked on', 'standing against', 'standing around', 'standing behind', 'standing beside', 'standing in front of', 'standing near', 'standing next to', 'staring at', 'stuck in', 'surrounding', 'swimming in', 'swinging', 'talking to', 'topped with', 'touching', 'traveling down', 'traveling on', 'tying', 'typing on', 'underneath', 'wading in', 'waiting for', 'walking across', 'walking by', 'walking down', 'walking next to', 'walking through', 'working in', 'working on', 'worn on', 'wrapped around', 'wrapped in', 'by', 'of', 'near', 'next to', 'with', 'beside', 'on the side of', 'around']
+    df = pd.DataFrame(vgr_records)
+    df = df[~df.Relation.isin(symmetric)]
+    print(f"Accuracy: {df.Accuracy.mean()}")
 
-print(f"Accuracy: {correct / total_count}")
+elif 'vga' in args.dataset:
+    vga_records = records
+    df = pd.DataFrame(vga_records)
+    print(f"Accuracy: {df.Accuracy.mean()}")
+
+else:
+    coco_order_records = records
+    df = pd.DataFrame(coco_order_records)
+    print(f"Accuracy: {df['Precision@1'].mean()}")
+
 
 
     

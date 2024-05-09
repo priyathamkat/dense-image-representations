@@ -10,6 +10,7 @@ from torch.nn import ConstantPad2d
 import pdb
 
 text_tokenizer_type_str = {
+    't5': '',
     't5_small': '',
     't5_base': '_t5_base',
     'clip': '_clip'

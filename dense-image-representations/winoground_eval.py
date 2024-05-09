@@ -4,18 +4,16 @@ import os
 
 import torch
 import torch.nn as nn
-from torchvision import transforms
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
 import clip
-
 from transformers import ViTImageProcessor
 
 from modules import VisionLanguageEncoder, VisionLanguageEncoderBase
 
-from data.winoground import WinogroundImagesAndCaptionTokens
-from data.tokens import VisualAndTextTokens
+from data.datautils import get_dataset
+import utils
 
 from contrastive_train import forward_pass
 from contrastive_train_baseline import forward_pass as forward_pass_base
@@ -52,7 +50,7 @@ args = parser.parse_args()
 
 clip_model = None
 if 'clip' in [args.image_encoder, args.text_encoder]:
-    clip_model, clip_image_processor = clip.load("ViT-B/16", device='cuda')
+    clip_model, clip_image_processor = clip.load("ViT-B/32", device='cuda')
     clip_model = clip_model.to(torch.float32)
 
 if 'baseline' in args.exp_name:
@@ -66,32 +64,37 @@ if 'baseline' in args.exp_name:
     else:
         image_processor = clip_image_processor
 
-    dataset = WinogroundImagesAndCaptionTokens(root='/cmlscratch/nehamk/datasets/winoground',
-                                                text_tokens_root=args.text_tokens,
-                                                vit_processor=image_processor,
-                                                text_tokenizer_type=args.text_encoder)
+    dataset = get_dataset(
+        dataset_name = 'winoground',
+        transform = image_processor,
+        with_image_tokens = False, 
+        caption_return_policy = 'all'
+    )
     forward_pass = forward_pass_base
 
 else:
-    dataset = VisualAndTextTokens(image_root=args.vision_tokens,
-                                    text_root=args.text_tokens,
-                                    number_of_images_per_text=2,
-                                    text_tokenizer_type=args.text_encoder)
+    dataset = get_dataset(
+        dataset_name = 'winoground',
+        image_tokens_root = f'winoground_visual_tokens',
+        with_image_tokens = True, 
+        caption_return_policy = 'all'
+    )
 
     vision_language_encoder = VisionLanguageEncoder(projection_dim=args.projection_dim,
                                                     transformer_width=512, 
                                                     transformer_heads=args.num_heads, 
                                                     transformer_layers=args.num_layers,
                                                     image_embedding_size=2880,
-                                                    preembed_nodes=args.preembed_nodes,
+                                                    preembed_nodes='_preembed' in args.exp_name,
                                                     text_encoder=args.text_encoder,
                                                     clip_model=clip_model,)
 
+tokenizer = utils.get_tokenizer(args.text_encoder)
 
 loader = DataLoader(
     dataset,
     batch_size=args.batch_size,
-    shuffle=True,
+    shuffle=False,
     num_workers=args.num_workers,
 )
 
@@ -99,13 +102,16 @@ vision_language_encoder = vision_language_encoder.cuda()
 if 'baseline' in args.exp_name:
     vision_language_encoder = nn.DataParallel(vision_language_encoder)
 
-# ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
-# if len(ckpts) == 0:
-#     exit(f"No checkpoints found in results/{args.exp_name}")
+ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
+if len(ckpts) == 0:
+    print(f"No checkpoints found in results/{args.exp_name}")
+else:
+    print(f"Loading state dict {ckpts[0]}")
+    state = torch.load(ckpts[0])
+    vision_language_encoder.load_state_dict(state['state_dict'])
 
-# print(f"Loading state dict {ckpts[0]}")
-# state = torch.load(ckpts[0])
-# vision_language_encoder.load_state_dict(state['state_dict'])
+if 'baseline' in args.exp_name:
+    vision_language_encoder = vision_language_encoder.module
 vision_language_encoder.eval()
 
 text_correct_count = 0
@@ -115,8 +121,11 @@ group_correct_count = 0
 total_count = 0
 for _, batch in enumerate(loader):
     with torch.no_grad():
-        batch_0 = [batch[b][0] for b in range(len(batch))]
-        batch_1 = [batch[b][1] for b in range(len(batch))]
+        batch_0 = {k:v[0] for (k,v) in zip(batch.keys(), batch.values())}
+        batch_1 = {k:v[1] for (k,v) in zip(batch.keys(), batch.values())}
+
+        batch_0['captions'] = utils.tokenize(batch_0['captions'], tokenizer, args.text_encoder)
+        batch_1['captions'] = utils.tokenize(batch_1['captions'], tokenizer, args.text_encoder)
         image_embeddings_0, text_embeddings_0 = forward_pass(vision_language_encoder, batch_0)
         image_embeddings_1, text_embeddings_1 = forward_pass(vision_language_encoder, batch_1)
 

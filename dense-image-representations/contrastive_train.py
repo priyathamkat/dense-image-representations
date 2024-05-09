@@ -2,69 +2,25 @@ import argparse
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-import torchvision.transforms as T
 import wandb
 from losses import ContrastiveLoss
 from modules import VisionLanguageEncoder
 
-from data.tokens import VisualAndTextTokens
+from data.datautils import get_dataset
+import utils
 
 import os
-import numpy as np
 import glob
 import pdb
 import clip
 
-def get_avg_sim(sim_matrix):
-    eye = torch.eye(sim_matrix.shape[0], device = sim_matrix.device).bool()
-    diag = (sim_matrix * eye).nonzero()
-    off_diag = (sim_matrix * ~eye).nonzero()
-    return sim_matrix[diag[:,0], diag[:,1]].mean().item(), sim_matrix[off_diag[:,0], off_diag[:,1]].mean().item()
-
-def get_retrieval_score(sim_1_2, log_name='v_t'):
-    ranked_sim = sim_1_2.sort(descending=True).indices
-    ranks = []
-    for i in range(ranked_sim.shape[0]):
-        ranks.append(torch.where(ranked_sim[i] == i)[0][0].item())
-    
-    ranks = torch.Tensor(ranks)
-    r1 = 100.0 * len(torch.where(ranks < 1)[0]) / len(ranks)
-    r5 = 100.0 * len(torch.where(ranks < 5)[0]) / len(ranks)
-    r10 = 100.0 * len(torch.where(ranks < 10)[0]) / len(ranks)
-    r50 = 100.0 * len(torch.where(ranks < 50)[0]) / len(ranks)
-    medr = torch.floor(torch.median(ranks)) + 1
-    meanr = ranks.mean() + 1
-    
-    wandb.log({f"{log_name}_r1": r1, f"{log_name}_r5": r5, f"{log_name}_r10": r10, f"{log_name}_r50": r50, f"{log_name}_medr": medr, f"{log_name}_meanr": meanr})
-
-
-def assign_learning_rate(optimizer, new_lr):
-    for param_group in optimizer.param_groups:
-        param_group["lr"] = new_lr
-
-def _warmup_lr(base_lr, warmup_length, step):
-    return base_lr * (step + 1) / warmup_length
-
-def cosine_lr(optimizer, base_lr, warmup_length, steps):
-    def _lr_adjuster(step):
-        if step < warmup_length:
-            lr = _warmup_lr(base_lr, warmup_length, step)
-        else:
-            e = step - warmup_length
-            es = steps - warmup_length
-            lr = 0.5 * (1 + np.cos(np.pi * e / es)) * base_lr
-        assign_learning_rate(optimizer, lr)
-        return lr
-    return _lr_adjuster
-
-
 def forward_pass(vision_language_encoder, batch):
-    image_tokens = batch[0].cuda()
-    image_features = batch[1].cuda()
-    num_non_pad_tokens = batch[2].cuda()
-    num_nodes = batch[3].cuda()
+    image_tokens = batch['image_tokens'].cuda()
+    image_features = batch['image_features'].cuda()
+    num_non_pad_tokens = batch['num_non_pad_tokens'].cuda()
+    num_nodes = batch['num_nodes'].cuda()
     # image_attention_mask = batch[4].cuda()
-    text_tokens = batch[5].cuda()
+    text_tokens = batch['captions'].cuda()
     
     # image_attention_mask = image_attention_mask.float().masked_fill(image_attention_mask == 0, float('-inf')).masked_fill(image_attention_mask == 1, float(0.0))
     # image_attention_mask = ~(image_attention_mask.bool())
@@ -87,6 +43,7 @@ def forward_pass(vision_language_encoder, batch):
 
 def train(
     vision_language_encoder: VisionLanguageEncoder,
+    tokenizer,
     optimizer: torch.optim.Optimizer,
     lr_scheduler,
     train_dataloader: DataLoader,
@@ -130,6 +87,9 @@ def train(
         vision_language_encoder.train()
 
         for i, batch in enumerate(train_dataloader):
+            # tokenize
+            batch['captions'] = utils.tokenize(batch['captions'], tokenizer, args.text_encoder)
+
             image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
             loss = contrastive_loss(text_embeddings, image_embeddings)
@@ -143,14 +103,14 @@ def train(
 
             wandb.log({"loss": loss.item(), "learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
 
-            epoch_loss += loss.item() * batch[0].shape[0]
+            epoch_loss += loss.item() * batch['captions'].shape[0]
 
         epoch_loss /= len(train_dataloader.dataset)
 
         wandb.log({"epoch_training_loss": loss})
 
         if epoch % args.validation_epochs == 0:
-            evaluate(vision_language_encoder, val_dataloader, contrastive_loss)
+            evaluate(vision_language_encoder, tokenizer, val_dataloader, contrastive_loss, args)
 
         if epoch % args.checkpoint_epochs == 0 or epoch == args.epochs - 1:
             state = {'state_dict': vision_language_encoder.state_dict(), 
@@ -164,8 +124,10 @@ def train(
 
 def evaluate(
     vision_language_encoder: VisionLanguageEncoder,
+    tokenizer,
     val_dataloader: DataLoader,
     contrastive_loss: ContrastiveLoss, 
+    args: argparse.Namespace,
 ):
     """
     Evaluate the performance of the models on the validation dataset.
@@ -189,9 +151,12 @@ def evaluate(
     x2 = []
     for batch in val_dataloader:
         with torch.no_grad():
+            # tokenize
+            batch['captions'] = utils.tokenize(batch['captions'], tokenizer, args.text_encoder)
+
             image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
-            loss += contrastive_loss(text_embeddings, image_embeddings).item() * batch[0].shape[0]
+            loss += contrastive_loss(text_embeddings, image_embeddings).item() * batch['captions'].shape[0]
         
        
             x1.append(image_embeddings)
@@ -207,18 +172,18 @@ def evaluate(
     sim_2_2 = torch.matmul(x2, x2.T)
     sim_1_2 = torch.matmul(x1, x2.T)
     
-    diag_sim_v_v, off_diag_sim_v_v = get_avg_sim(sim_1_1)
+    diag_sim_v_v, off_diag_sim_v_v = utils.get_avg_sim(sim_1_1)
     wandb.log({"diag_sim_v_v": diag_sim_v_v, "off_diag_sim_v_v": off_diag_sim_v_v})
 
-    diag_sim_t_t, off_diag_sim_t_t = get_avg_sim(sim_2_2)
+    diag_sim_t_t, off_diag_sim_t_t = utils.get_avg_sim(sim_2_2)
     wandb.log({"diag_sim_t_t": diag_sim_t_t, "off_diag_sim_t_t": off_diag_sim_t_t})
 
-    diag_sim_v_t, off_diag_sim_v_t = get_avg_sim(sim_1_2)
-    wandb.log({"diag_sim_v_t": diag_sim_v_t, "off_diag_sim_v_t": off_diag_sim_v_t})
+    diag_sim_v_t, off_diag_sim_v_t = utils.get_avg_sim(sim_1_2)
+    wandb.log({"diag_sim_v_t": diag_sim_v_t, "off_diag_sim_v_t": off_diag_sim_v_t})   
 
-    get_retrieval_score(sim_1_2, log_name='v_t')
+    utils.get_retrieval_score(sim_1_2, log_name='v_t')
     sim_2_1 = sim_1_2.T
-    get_retrieval_score(sim_2_1, log_name='t_v')
+    utils.get_retrieval_score(sim_2_1, log_name='t_v')
     
     loss /= len(val_dataloader.dataset)
 
@@ -230,10 +195,7 @@ def parse_args():
 
     parser.add_argument('--exp_name', type=str, required=True)
 
-    parser.add_argument('--vision_tokens_train', type=str, required=True)
-    parser.add_argument('--vision_tokens_val', type=str, required=True)
-    parser.add_argument('--text_tokens_train', type=str, required=True)
-    parser.add_argument('--text_tokens_val', type=str, required=True)
+    parser.add_argument('--dataset', type=str, required=True)
 
     parser.add_argument('--num_layers', type=int, default=6)
     parser.add_argument('--num_heads', type=int, default=8)
@@ -273,7 +235,7 @@ def main():
 
     clip_model = None
     if args.text_encoder == 'clip':
-        clip_model, _ = clip.load("ViT-B/16", device='cuda')
+        clip_model, _ = clip.load("ViT-B/32", device='cuda')
         clip_model = clip_model.to(torch.float32)
 
     vision_language_encoder = VisionLanguageEncoder(projection_dim=args.projection_dim,
@@ -287,8 +249,20 @@ def main():
 
     vision_language_encoder = vision_language_encoder.cuda()
 
-    dataset = VisualAndTextTokens(image_root=args.vision_tokens_train, text_root=args.text_tokens_train, text_tokenizer_type=args.text_encoder)
-    val_dataset = VisualAndTextTokens(image_root=args.vision_tokens_val, text_root=args.text_tokens_val, text_tokenizer_type=args.text_encoder)
+    tokenizer = utils.get_tokenizer(args.text_encoder)
+
+    dataset = get_dataset(
+        dataset_name = args.dataset,
+        image_tokens_root = f'{args.dataset}_visual_tokens',
+        with_image_tokens = True, 
+        caption_return_policy = 'random'
+    )
+    val_dataset = get_dataset(
+        dataset_name = args.dataset + '_val',
+        image_tokens_root = f'{args.dataset}_val_visual_tokens',
+        with_image_tokens = True, 
+        caption_return_policy = 'random'
+    )
     train_dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -311,7 +285,7 @@ def main():
 
     total_steps = (len(dataset) // args.batch_size) * args.epochs
     warmup_steps = (len(dataset) // args.batch_size) * args.warmup 
-    lr_scheduler = cosine_lr(optimizer, args.lr, warmup_steps, total_steps)
+    lr_scheduler = utils.cosine_lr(optimizer, args.lr, warmup_steps, total_steps)
 
     init_wandb(args)
     wandb.watch(vision_language_encoder, log="all")
@@ -322,6 +296,7 @@ def main():
 
     train(
         vision_language_encoder,
+        tokenizer,
         optimizer,
         lr_scheduler,
         train_dataloader,

@@ -5,71 +5,119 @@ from dataset_zoo import VG_Relation, VG_Attribution, COCO_Order
 import torch
 import numpy as np
 import glob
-
-text_tokenizer_type_str = {
-    't5_small': '',
-    't5_base': '_t5_base',
-    'clip': '_clip'
-}
+from PIL import Image
+from .datautils import get_image_tokens
 
 
-class ARO(Dataset):
-    def __init__(self, root, transform=None, task='aro_vgr'):
-        if task == 'aro_vgr':
-            self.data = VG_Relation(image_preprocess=None, download=True, root_dir=root)
-        elif task == 'aro_vga':
-            self.data = VG_Attribution(image_preprocess=None, download=True, root_dir=root)
-        elif task == 'aro_coco_order':
-            self.data = COCO_Order(image_preprocess=None, download=True, root_dir=root + '/coco', split='val')
-        else:
-            raise ValueError('Invalid task')
-
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.data)
+class VG_RelationImagesAndCaptions(VG_Relation):
+    def __init__(self, root_dir, image_preprocess=None, download=True, return_image_sizes = False):
+        super().__init__(image_preprocess=image_preprocess, download=download, root_dir=root_dir)
+        self.return_image_sizes = return_image_sizes
 
     def __getitem__(self, idx):
-        sample_dict = self.data[idx]
-
+        sample_dict = super().__getitem__(idx)
+        
         image = sample_dict['image_options'][0]
+        if isinstance(image, dict):
+            image = image['pixel_values'][0]
+        captions = sample_dict['caption_options']
 
-        im_size = np.array(image.size)
-        if self.transform:
-            image = self.transform(image)
+        ret = {
+            'images': image,
+            'ids': idx,
+            'captions': captions
+        }
+        if self.return_image_sizes:
+            im_size = np.array(Image.open(self.dataset[idx]['image_path']).convert('RGB').size)
+            ret['im_sizes'] = im_size
 
-        return image, im_size, idx
+        return ret
 
-
-class AROImagesAndCaptionTokens(Dataset):
-    def __init__(self, root, text_tokens_root, vit_processor=None, task='aro_vgr', text_tokenizer_type='t5_small'):
-        if task == 'aro_vgr':
-            self.data = VG_Relation(image_preprocess=None, download=True, root_dir=root)
-        elif task == 'aro_vga':
-            self.data = VG_Attribution(image_preprocess=None, download=True, root_dir=root)
-        elif task == 'aro_coco_order':
-            self.data = COCO_Order(image_preprocess=None, download=True, root_dir=root + '/coco', split='val')
-        else:
-            raise ValueError('Invalid task')
-
-        self.vit_processor = vit_processor
-
-        self.text_tokens_root = text_tokens_root
-        self.text_tokenizer_str = text_tokenizer_type_str[text_tokenizer_type]
-
-    def __len__(self):
-        return len(self.data)
+class VG_RelationImageTokensAndCaptions(VG_Relation):
+    def __init__(self, root_dir, image_tokens_root, image_preprocess=None, download=True):
+        super().__init__(image_preprocess=image_preprocess, download=download, root_dir=root_dir)
+        self.image_tokens_root = image_tokens_root
 
     def __getitem__(self, idx):
-        sample_dict = self.data[idx]
+        sample_dict = super().__getitem__(idx)
+        
+        all_tokens_dict = get_image_tokens(self.image_tokens_root, idx, 0)
+        captions = sample_dict['caption_options']
+        all_tokens_dict['captions'] = captions
+        return all_tokens_dict
 
+
+class VG_AttributionImagesAndCaptions(VG_Attribution):
+    def __init__(self, root_dir, image_preprocess=None, download=True, return_image_sizes = False):
+        super().__init__(image_preprocess=image_preprocess, download=download, root_dir=root_dir)
+        self.return_image_sizes = return_image_sizes
+
+    def __getitem__(self, idx):
+        sample_dict = super().__getitem__(idx)
+        
         image = sample_dict['image_options'][0]
+        if isinstance(image, dict):
+            image = image['pixel_values'][0]
+        captions = sample_dict['caption_options']
 
-        text_tokens = [torch.load(f, map_location='cpu') for f in sorted(glob.glob(f'{self.text_tokens_root}/{idx}_*{self.text_tokenizer_str}_tokens.pt'))]
+        ret = {
+            'images': image,
+            'ids': idx,
+            'captions': captions
+        }
+        if self.return_image_sizes:
+            im_size = np.array(Image.open(self.dataset[idx]['image_path']).convert('RGB').size)
+            ret['im_sizes'] = im_size
 
-        if self.vit_processor:
-            image = self.vit_processor(image)
-            if not isinstance(image, torch.Tensor):
-                image = image['pixel_values'][0]
+        return ret
 
-        return image, text_tokens
+class VG_AttributionImageTokensAndCaptions(VG_Attribution):
+    def __init__(self, root_dir, image_tokens_root, image_preprocess=None, download=True):
+        super().__init__(image_preprocess=image_preprocess, download=download, root_dir=root_dir)
+        self.image_tokens_root = image_tokens_root
+
+    def __getitem__(self, idx):
+        sample_dict = super().__getitem__(idx)
+        
+        all_tokens_dict = get_image_tokens(self.image_tokens_root, idx, 0)
+        captions = sample_dict['caption_options']
+        all_tokens_dict['captions'] = captions
+        return all_tokens_dict
+
+
+class COCO_OrderImagesAndCaptions(COCO_Order):
+    def __init__(self, root_dir, image_preprocess=None, download=True, return_image_sizes = False):
+        super().__init__(image_preprocess=image_preprocess, download=download, root_dir=root_dir)
+        self.return_image_sizes = return_image_sizes
+
+    def __getitem__(self, idx):
+        sample_dict = super().__getitem__(idx)
+        
+        image = sample_dict['image_options'][0]
+        if isinstance(image, dict):
+            image = image['pixel_values'][0]
+        captions = sample_dict['caption_options']
+
+        ret = {
+            'images': image,
+            'ids': idx,
+            'captions': captions
+        }
+        if self.return_image_sizes:
+            im_size = np.array(Image.open(self.dataset[idx]['image_path']).convert('RGB').size)
+            ret['im_sizes'] = im_size
+
+        return ret
+
+class COCO_OrderImageTokensAndCaptions(COCO_Order):
+    def __init__(self, root_dir, image_tokens_root, image_preprocess=None, download=True):
+        super().__init__(image_preprocess=image_preprocess, download=download, root_dir=root_dir)
+        self.image_tokens_root = image_tokens_root
+
+    def __getitem__(self, idx):
+        sample_dict = super().__getitem__(idx)
+        
+        all_tokens_dict = get_image_tokens(self.image_tokens_root, idx, 0)
+        captions = sample_dict['caption_options']
+        all_tokens_dict['captions'] = captions
+        return all_tokens_dict
