@@ -1,27 +1,27 @@
 import argparse
+import glob
+import os
+import pdb
+
+import clip
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+import utils
 import wandb
+from accelerate import Accelerator
+from data.datautils import get_dataset
 from losses import ContrastiveLoss
 from modules import VisionLanguageEncoderBase
+from torch.utils.data import DataLoader
 from transformers import ViTImageProcessor
-
-from data.datautils import get_dataset
-import utils
-
-import clip
-
-import os
-import glob
-import pdb
+from accelerate.utils import DistributedDataParallelKwargs
 
 
 def forward_pass(vision_language_encoder, batch):
-    images = batch['images'].to('cuda')
-    text_tokens = batch['captions'].cuda()
-    
+    images = batch["images"]
+    text_tokens = batch["captions"]
+
     image_embeddings, text_embeddings = vision_language_encoder(images, text_tokens)
 
     if len(text_embeddings.shape) == 3:
@@ -31,16 +31,18 @@ def forward_pass(vision_language_encoder, batch):
 
     return image_embeddings, text_embeddings
 
+
 def train(
     vision_language_encoder: VisionLanguageEncoderBase,
     tokenizer,
     optimizer: torch.optim.Optimizer,
     lr_scheduler,
     train_dataloader: DataLoader,
-    val_dataloader: DataLoader, 
+    val_dataloader: DataLoader,
     contrastive_loss: ContrastiveLoss,
     checkpoint_dir: str,
     args: argparse.Namespace,
+    accelerator: Accelerator,
 ):
     """
     Trains the image and text encoders (and the projection heads) using contrastive learning.
@@ -62,65 +64,79 @@ def train(
 
     start_epoch = 0
     # load checkpoint if exists
-    ckpts = sorted(glob.glob(f"{checkpoint_dir}/model_*.pth.tar"), key=os.path.getmtime, reverse=True)
+    ckpts = sorted(
+        glob.glob(f"{checkpoint_dir}/model_*.pth.tar"),
+        key=os.path.getmtime,
+        reverse=True,
+    )
     if len(ckpts) > 0:
         print(f"Loading state dict {ckpts[0]}")
         state = torch.load(ckpts[0])
-        vision_language_encoder.load_state_dict(state['state_dict'])
-        optimizer.load_state_dict(state['optimizer_state'])
-        start_epoch = state['epoch'] + 1
+        vision_language_encoder.load_state_dict(state["state_dict"])
+        optimizer.load_state_dict(state["optimizer_state"])
+        start_epoch = state["epoch"] + 1
 
-    
     for epoch in range(start_epoch, args.epochs):
         epoch_loss = 0
 
         vision_language_encoder.train()
 
-
         for i, batch in enumerate(train_dataloader):
             # tokenize
-            batch['captions'] = utils.tokenize(batch['captions'], tokenizer, args.text_encoder)
+            batch["captions"] = utils.tokenize(
+                batch["captions"], tokenizer, args.text_encoder
+            )
 
-            image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
+            image_embeddings, text_embeddings = forward_pass(
+                vision_language_encoder, batch
+            )
 
             loss = contrastive_loss(text_embeddings, image_embeddings)
 
             optimizer.zero_grad()
-            loss.backward()
+            accelerator.backward(loss)
             optimizer.step()
 
             step = (len(train_dataloader.dataset) // args.batch_size) * epoch + i
             lr_scheduler(step)
 
-            wandb.log({"loss": loss.item(), "learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
+            accelerator.log(
+                {
+                    "loss": loss.item(),
+                    "learning_rate": optimizer.param_groups[0]["lr"],
+                },
+                step=step,
+            )
 
-            epoch_loss += loss.item() * batch['captions'].shape[0]
+            epoch_loss += loss.item() * batch["captions"].shape[0]
 
         epoch_loss /= len(train_dataloader.dataset)
 
-        wandb.log({"epoch_training_loss": loss})
+        accelerator.log({"epoch_training_loss": loss}, step=epoch)
 
         if epoch % args.validation_epochs == 0:
-            evaluate(vision_language_encoder, tokenizer, val_dataloader, contrastive_loss, args)
+            evaluate(
+                vision_language_encoder,
+                tokenizer,
+                val_dataloader,
+                contrastive_loss,
+                args,
+                accelerator,
+                epoch,
+            )
 
         if epoch % args.checkpoint_epochs == 0 or epoch == args.epochs - 1:
-            state = {
-                'state_dict': vision_language_encoder.state_dict(), 
-                'epoch': epoch,
-                'optimizer_state': optimizer.state_dict()
-            }
-            ckpts = glob.glob(f"{checkpoint_dir}/model_*.pt*")
-            for ckpt in ckpts:
-                os.remove(ckpt)
-            torch.save(state, f"{checkpoint_dir}/model_{epoch}.pth.tar")
+            accelerator.save_state(output_dir=f"{checkpoint_dir}")
 
-
+@torch.no_grad()
 def evaluate(
     vision_language_encoder,
     tokenizer,
     val_dataloader: DataLoader,
-    contrastive_loss: ContrastiveLoss, 
+    contrastive_loss: ContrastiveLoss,
     args: argparse.Namespace,
+    accelerator: Accelerator,
+    epoch: int,
 ):
     """
     Evaluate the performance of the models on the validation dataset.
@@ -145,64 +161,78 @@ def evaluate(
     for batch in val_dataloader:
         with torch.no_grad():
             # tokenize
-            batch['captions'] = utils.tokenize(batch['captions'], tokenizer, args.text_encoder)
+            batch["captions"] = utils.tokenize(
+                batch["captions"], tokenizer, args.text_encoder
+            )
 
-            image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
+            image_embeddings, text_embeddings = forward_pass(
+                vision_language_encoder, batch
+            )
 
-            loss += contrastive_loss(text_embeddings, image_embeddings).item() * batch['captions'].shape[0]
-        
-       
+            loss += (
+                contrastive_loss(text_embeddings, image_embeddings).item()
+                * batch["captions"].shape[0]
+            )
+
             x1.append(image_embeddings)
             x2.append(text_embeddings)
 
     x1 = torch.cat(x1, dim=0)
     x2 = torch.cat(x2, dim=0)
 
-    x1 = F.normalize(x1, dim = 1)
-    x2 = F.normalize(x2, dim = 1)
-    
+    x1 = F.normalize(x1, dim=1)
+    x2 = F.normalize(x2, dim=1)
+
     sim_1_1 = torch.matmul(x1, x1.T)
     sim_2_2 = torch.matmul(x2, x2.T)
     sim_1_2 = torch.matmul(x1, x2.T)
-    
+
     diag_sim_v_v, off_diag_sim_v_v = utils.get_avg_sim(sim_1_1)
-    wandb.log({"diag_sim_v_v": diag_sim_v_v, "off_diag_sim_v_v": off_diag_sim_v_v})
+    accelerator.log(
+        {"diag_sim_v_v": diag_sim_v_v, "off_diag_sim_v_v": off_diag_sim_v_v}, step=epoch
+    )
 
     diag_sim_t_t, off_diag_sim_t_t = utils.get_avg_sim(sim_2_2)
-    wandb.log({"diag_sim_t_t": diag_sim_t_t, "off_diag_sim_t_t": off_diag_sim_t_t})
+    accelerator.log(
+        {"diag_sim_t_t": diag_sim_t_t, "off_diag_sim_t_t": off_diag_sim_t_t}, step=epoch
+    )
 
     diag_sim_v_t, off_diag_sim_v_t = utils.get_avg_sim(sim_1_2)
-    wandb.log({"diag_sim_v_t": diag_sim_v_t, "off_diag_sim_v_t": off_diag_sim_v_t})
+    accelerator.log(
+        {"diag_sim_v_t": diag_sim_v_t, "off_diag_sim_v_t": off_diag_sim_v_t}, step=epoch
+    )
 
-    utils.get_retrieval_score(sim_1_2, log_name='v_t')
+    utils.get_retrieval_score(sim_1_2, log_name="v_t")
     sim_2_1 = sim_1_2.T
-    utils.get_retrieval_score(sim_2_1, log_name='t_v')
-    
+    utils.get_retrieval_score(sim_2_1, log_name="t_v")
+
     loss /= len(val_dataloader.dataset)
 
-    wandb.log({"validation_loss": loss})
+    accelerator.log({"validation_loss": loss}, step=epoch)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="VQA Evaluation of Generated T2I CompBench color dataset")
+    parser = argparse.ArgumentParser(
+        description="VQA Evaluation of Generated T2I CompBench color dataset"
+    )
 
-    parser.add_argument('--exp_name', type=str, required=True)
+    parser.add_argument("--exp_name", type=str, required=True)
 
-    parser.add_argument('--dataset', type=str, required=True)
+    parser.add_argument("--dataset", type=str, required=True)
 
-    parser.add_argument('--text_encoder', type=str, default='t5_small')
-    parser.add_argument('--image_encoder', type=str, default='vit')
-    parser.add_argument('--projection_dim', type=int, default=512)
+    parser.add_argument("--text_encoder", type=str, default="t5_small")
+    parser.add_argument("--image_encoder", type=str, default="vit")
+    parser.add_argument("--projection_dim", type=int, default=512)
 
-    parser.add_argument('--batch_size', type=int, default=512)
-    parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--beta1', type=float, default=0.9)
-    parser.add_argument('--beta2', type=float, default=0.999)
-    parser.add_argument('--eps', type=float, default=1e-8)
-    
-    parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--warmup', type=int, default=10000)
-    parser.add_argument('--num_workers', type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--beta1", type=float, default=0.9)
+    parser.add_argument("--beta2", type=float, default=0.999)
+    parser.add_argument("--eps", type=float, default=1e-8)
+
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--warmup", type=int, default=10000)
+    parser.add_argument("--num_workers", type=int, default=16)
 
     parser.add_argument("--validation_epochs", type=int, default=10)
     parser.add_argument("--checkpoint_epochs", type=int, default=50)
@@ -212,49 +242,48 @@ def parse_args():
     return args
 
 
-def init_wandb(args):
-    wandb.login()
-    wandb.init(
-        name = args.exp_name,
-        project="graph-clip",
-        config=args,
-    )
-
 def main():
     args = parse_args()
-    
+    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(log_with="wandb", kwargs_handlers=[kwargs])
+
+    accelerator.init_trackers(project_name=args.exp_name, config=args)
+
     clip_model = None
-    if 'clip' in [args.image_encoder, args.text_encoder]:
-        clip_model, clip_image_processor = clip.load("ViT-B/32", device='cuda')
+    if "clip" in [args.image_encoder, args.text_encoder]:
+        clip_model, clip_image_processor = clip.load("ViT-B/32")
         clip_model = clip_model.to(torch.float32)
 
-    vision_language_encoder = VisionLanguageEncoderBase(projection_dim=args.projection_dim,
-                                                        text_encoder=args.text_encoder,
-                                                        image_encoder=args.image_encoder,
-                                                        clip_model=clip_model,)
-    vision_language_encoder = vision_language_encoder.cuda()
-    vision_language_encoder = nn.DataParallel(vision_language_encoder)
+    vision_language_encoder = VisionLanguageEncoderBase(
+        projection_dim=args.projection_dim,
+        text_encoder=args.text_encoder,
+        image_encoder=args.image_encoder,
+        clip_model=clip_model,
+    )
+    vision_language_encoder = accelerator.prepare(vision_language_encoder)
 
-    if args.image_encoder == 'vit':
-        image_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224-in21k')
+    if args.image_encoder == "vit":
+        image_processor = ViTImageProcessor.from_pretrained(
+            "google/vit-base-patch16-224-in21k"
+        )
     else:
         image_processor = clip_image_processor
 
     tokenizer = utils.get_tokenizer(args.text_encoder)
 
     dataset = get_dataset(
-        dataset_name = args.dataset,
-        transform = image_processor,
-        with_image_tokens = False, 
-        caption_return_policy = 'random'
+        dataset_name=args.dataset,
+        transform=image_processor,
+        with_image_tokens=False,
+        caption_return_policy="random",
     )
     val_dataset = get_dataset(
-        dataset_name = args.dataset + '_val',
-        transform = image_processor,
-        with_image_tokens = False, 
-        caption_return_policy = 'random'
+        dataset_name=args.dataset + "_val",
+        transform=image_processor,
+        with_image_tokens=False,
+        caption_return_policy="random",
     )
-    
+
     train_dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -270,21 +299,20 @@ def main():
 
     optimizer = torch.optim.AdamW(
         vision_language_encoder.parameters(),
-        lr = args.lr,
-        betas = (args.beta1, args.beta2),
-        eps = args.eps,
+        lr=args.lr,
+        betas=(args.beta1, args.beta2),
+        eps=args.eps,
     )
 
     total_steps = (len(train_dataloader.dataset) // args.batch_size) * args.epochs
-    warmup_steps = (len(train_dataloader.dataset) // args.batch_size) * args.warmup 
+    warmup_steps = (len(train_dataloader.dataset) // args.batch_size) * args.warmup
     lr_scheduler = utils.cosine_lr(optimizer, args.lr, warmup_steps, total_steps)
 
-    init_wandb(args)
-    wandb.watch(vision_language_encoder, log="all")
+    train_dataloader, val_dataloader, optimizer, lr_scheduler = accelerator.prepare(
+        train_dataloader, val_dataloader, optimizer, lr_scheduler
+    )
 
     checkpoint_dir = f"results_clip32/{args.exp_name}"
-    if not os.path.exists(checkpoint_dir):
-        os.makedirs(checkpoint_dir)
 
     train(
         vision_language_encoder,
@@ -296,7 +324,9 @@ def main():
         ContrastiveLoss(),
         checkpoint_dir,
         args,
+        accelerator,
     )
+    accelerator.end_training()
 
 
 if __name__ == "__main__":
