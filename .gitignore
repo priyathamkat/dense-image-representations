@@ -173,4 +173,4 @@ GRIT/
 *_text_tokens*/
 wandb/
 run_*.sh
-results/
+results*/

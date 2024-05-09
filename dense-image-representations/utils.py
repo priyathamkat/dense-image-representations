@@ -1,6 +1,7 @@
 import torch
 import wandb 
 import clip
+import numpy as np
 from transformers import AutoTokenizer
 
 def get_tokenizer(text_encoder_type = 'clip'):

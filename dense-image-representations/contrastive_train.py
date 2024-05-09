@@ -1,18 +1,18 @@
 import argparse
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import wandb
-from losses import ContrastiveLoss
-from modules import VisionLanguageEncoder
-
-from data.datautils import get_dataset
-import utils
-
 import os
 import glob
 import pdb
 import clip
+
+from losses import ContrastiveLoss
+from modules import VisionLanguageEncoder
+from data.datautils import get_dataset
+import utils
 
 def forward_pass(vision_language_encoder, batch):
     image_tokens = batch['image_tokens'].cuda()
@@ -202,6 +202,7 @@ def parse_args():
     parser.add_argument('--projection_dim', type=int, default=512)
     parser.add_argument('--preembed_nodes', action='store_true')
     parser.add_argument('--text_encoder', type=str, default='t5_small')
+    parser.add_argument('--transformer', type=str, default='clip')
 
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=0.01)
@@ -239,15 +240,17 @@ def main():
         clip_model = clip_model.to(torch.float32)
 
     vision_language_encoder = VisionLanguageEncoder(projection_dim=args.projection_dim,
-                                                    transformer_width=512, 
+                                                    transformer_width=768 if args.transformer == 'clip' else 512, 
                                                     transformer_heads=args.num_heads, 
                                                     transformer_layers=args.num_layers,
                                                     image_embedding_size=2880,
                                                     preembed_nodes=args.preembed_nodes,
                                                     text_encoder=args.text_encoder,
-                                                    clip_model=clip_model,)
+                                                    clip_model=clip_model,
+                                                    transformer=args.transformer,)
 
     vision_language_encoder = vision_language_encoder.cuda()
+    vision_language_encoder = nn.DataParallel(vision_language_encoder)
 
     tokenizer = utils.get_tokenizer(args.text_encoder)
 
@@ -290,7 +293,7 @@ def main():
     init_wandb(args)
     wandb.watch(vision_language_encoder, log="all")
 
-    checkpoint_dir = f"results/{args.exp_name}"
+    checkpoint_dir = f"results_clip32/{args.exp_name}"
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
 

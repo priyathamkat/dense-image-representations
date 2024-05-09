@@ -79,6 +79,7 @@ class VisionLanguageEncoder(nn.Module):
         context_length: int = 77,
         preembed_nodes: bool = False,
         text_encoder: str = "t5_small",
+        transformer = 'clip',
         clip_model = None,
         #  vocab_size: int = 49408,
     ):
@@ -87,14 +88,32 @@ class VisionLanguageEncoder(nn.Module):
         self.context_length = context_length
         self.transformer_heads = transformer_heads
 
-        self.image_transformer = TransformerEncoder(
-            encoder_layer=TransformerEncoderLayer(
-                d_model=transformer_width,
-                nhead=transformer_heads,
-                batch_first=True,
-            ),
-            num_layers=transformer_layers,
-        )
+        self.transformer = transformer
+        self.pre_mlp = None
+        if self.transformer == 'clip':
+            self.pre_mlp = nn.Sequential(
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                nn.Linear(512, transformer_width),
+            )
+            self.image_transformer = clip_model.visual.transformer
+            self.ln_final = clip_model.visual.ln_post
+            self.image_projection = clip_model.visual.proj
+
+        else:   
+            self.image_transformer = TransformerEncoder(
+                encoder_layer=TransformerEncoderLayer(
+                    d_model=transformer_width,
+                    nhead=transformer_heads,
+                    batch_first=True,
+                ),
+                num_layers=transformer_layers,
+            )
+            self.ln_final = nn.LayerNorm(transformer_width)
+            self.image_projection = nn.Parameter(torch.empty(512, projection_dim))
+            nn.init.normal_(self.image_projection, std=transformer_width ** -0.5)
 
         self.text_encoder = text_encoder
         # projection_dim = 512 # clip output is 512 (no additional projector needed), so just project to 512 for consistency
@@ -118,13 +137,6 @@ class VisionLanguageEncoder(nn.Module):
             self.positional_embeddings[IMAGE_EMBEDDING] = nn.Parameter(
                 torch.empty((transformer_width,))
             )
-        self.ln_final = nn.LayerNorm(transformer_width)
-
-        # self.image_projection = ProjectionHead(
-        #     embedding_dim=512, projection_dim=projection_dim, dropout=0.1
-        # )
-        self.image_projection = nn.Parameter(torch.empty(512, projection_dim))
-        nn.init.normal_(self.image_projection, std=transformer_width ** -0.5)
 
         self.preembed_nodes = preembed_nodes
         if self.preembed_nodes:
@@ -169,6 +181,10 @@ class VisionLanguageEncoder(nn.Module):
 
         'image_embedding': batch_size x image_embedding_size
         """
+
+        if self.pre_mlp is not None:
+            tokens = self.pre_mlp(tokens)
+        
         image_embedding = image_embedding.unsqueeze(1)
         max_num_nodes = max(num_nodes)
         nodes = tokens[:, :max_num_nodes, :]
@@ -201,15 +217,18 @@ class VisionLanguageEncoder(nn.Module):
                 dim=1,
             )
             x = x[:, : self.context_length, :]
-        x = self.image_transformer(
-            x, mask=image_attention_mask
-        )
+
+        if self.transformer == 'clip':
+            x = x.permute(1, 0, 2)
+            x = self.image_transformer(x)
+            x = x.permute(1, 0, 2)
+
+        else:
+            x = self.image_transformer(
+                x, mask=image_attention_mask
+            )
+
         x = self.ln_final(x)
-
-        # x.shape = [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        # x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
-
         image_embeddings = x @ self.image_projection
         return image_embeddings
 

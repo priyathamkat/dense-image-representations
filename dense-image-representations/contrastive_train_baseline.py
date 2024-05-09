@@ -282,7 +282,7 @@ def main():
     init_wandb(args)
     wandb.watch(vision_language_encoder, log="all")
 
-    checkpoint_dir = f"results/{args.exp_name}"
+    checkpoint_dir = f"results_clip32/{args.exp_name}"
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
 
