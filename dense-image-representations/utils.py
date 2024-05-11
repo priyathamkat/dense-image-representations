@@ -14,9 +14,9 @@ def get_tokenizer(text_encoder_type = 'clip'):
 
 def tokenize(captions, tokenizer = None, text_encoder_type = 'clip'):
     if 't5' in text_encoder_type:
-        tokens = tokenizer(captions, return_tensors="pt", padding='max_length', max_length=77, truncation=True).input_ids.squeeze().cpu()
+        tokens = tokenizer(captions, return_tensors="pt", padding='max_length', max_length=77, truncation=True).input_ids.cpu()
     else:
-        tokens = clip.tokenize(captions).squeeze().cpu()
+        tokens = clip.tokenize(captions).cpu()
     return tokens
 
 
@@ -26,7 +26,7 @@ def get_avg_sim(sim_matrix):
     off_diag = (sim_matrix * ~eye).nonzero()
     return sim_matrix[diag[:,0], diag[:,1]].mean().item(), sim_matrix[off_diag[:,0], off_diag[:,1]].mean().item()
 
-def get_retrieval_score(sim_1_2, log_name='v_t'):
+def get_retrieval_score(sim_1_2, accelerator, log_name='v_t'):
     ranked_sim = sim_1_2.sort(descending=True).indices
     ranks = []
     for i in range(ranked_sim.shape[0]):
@@ -40,7 +40,7 @@ def get_retrieval_score(sim_1_2, log_name='v_t'):
     medr = torch.floor(torch.median(ranks)) + 1
     meanr = ranks.mean() + 1
     
-    wandb.log({f"{log_name}_r1": r1, f"{log_name}_r5": r5, f"{log_name}_r10": r10, f"{log_name}_r50": r50, f"{log_name}_medr": medr, f"{log_name}_meanr": meanr})
+    accelerator.log({f"{log_name}_r1": r1, f"{log_name}_r5": r5, f"{log_name}_r10": r10, f"{log_name}_r50": r50, f"{log_name}_medr": medr, f"{log_name}_meanr": meanr})
 
 
 def assign_learning_rate(optimizer, new_lr):

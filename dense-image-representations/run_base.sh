@@ -10,7 +10,9 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 
-python3 contrastive_train_baseline.py \
+accelerate launch --multi_gpu \
+--main_process_port 17320 \
+contrastive_train_baseline.py \
 --dataset coco \
 --batch_size 256 \
 --epochs 100 \
@@ -22,3 +24,4 @@ python3 contrastive_train_baseline.py \
 --text_encoder clip \
 --lr 1e-06 \
 --exp_name 1e-06-clip-clip_baseline \
+--result_dir results_clip32 \

@@ -72,6 +72,7 @@ parser.add_argument('--preembed_nodes', action='store_true')
 
 parser.add_argument('--text_encoder', type=str, default='t5')
 parser.add_argument('--image_encoder', type=str, default='vit')
+parser.add_argument('--transformer', type=str, default='clip')
 
 
 args = parser.parse_args()
@@ -108,13 +109,14 @@ else:
     )
 
     vision_language_encoder = VisionLanguageEncoder(projection_dim=args.projection_dim,
-                                                    transformer_width=512, 
+                                                    transformer_width=768 if args.transformer == 'clip' else 512, 
                                                     transformer_heads=args.num_heads, 
                                                     transformer_layers=args.num_layers,
                                                     image_embedding_size=2880,
                                                     preembed_nodes=args.preembed_nodes,
                                                     text_encoder=args.text_encoder,
-                                                    clip_model=clip_model,)
+                                                    clip_model=clip_model,
+                                                    transformer=args.transformer)
 
 loader = DataLoader(
     dataset,
@@ -124,19 +126,17 @@ loader = DataLoader(
 )
 
 vision_language_encoder = vision_language_encoder.cuda()
-if 'baseline' in args.exp_name:
-    vision_language_encoder = nn.DataParallel(vision_language_encoder)
+vision_language_encoder = nn.DataParallel(vision_language_encoder)
 
-ckpts = sorted(glob.glob(f'results/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
+ckpts = sorted(glob.glob(f'results_clip32/{args.exp_name}/model_*.pth.tar'), key=os.path.getmtime, reverse=True)
 if len(ckpts) == 0:
-    print(f"No checkpoints found in results/{args.exp_name}")
+    print(f"No checkpoints found in results_clip32/{args.exp_name}")
 else:
     print(f"Loading state dict {ckpts[0]}")
     state = torch.load(ckpts[0])
     vision_language_encoder.load_state_dict(state['state_dict'])
 
-if 'baseline' in args.exp_name:
-    vision_language_encoder = vision_language_encoder.module
+vision_language_encoder = vision_language_encoder.module.cuda()
 vision_language_encoder.eval()
 
 tokenizer = utils.get_tokenizer(args.text_encoder)

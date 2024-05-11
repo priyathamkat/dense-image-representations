@@ -91,13 +91,14 @@ class VisionLanguageEncoder(nn.Module):
         self.transformer = transformer
         self.pre_mlp = None
         if self.transformer == 'clip':
-            self.pre_mlp = nn.Sequential(
-                nn.Linear(512, 512),
-                nn.ReLU(),
-                nn.Linear(512, 512),
-                nn.ReLU(),
-                nn.Linear(512, transformer_width),
-            )
+            # self.pre_mlp = nn.Sequential(
+            #     nn.Linear(512, 512),
+            #     nn.ReLU(),
+            #     nn.Linear(512, 512),
+            #     nn.ReLU(),
+            #     nn.Linear(512, transformer_width),
+            # )
+            self.pre_mlp = nn.Linear(512, transformer_width)
             self.image_transformer = clip_model.visual.transformer
             self.ln_final = clip_model.visual.ln_post
             self.image_projection = clip_model.visual.proj
@@ -182,6 +183,7 @@ class VisionLanguageEncoder(nn.Module):
         'image_embedding': batch_size x image_embedding_size
         """
 
+        tokens = tokens.clone()
         if self.pre_mlp is not None:
             tokens = self.pre_mlp(tokens)
         

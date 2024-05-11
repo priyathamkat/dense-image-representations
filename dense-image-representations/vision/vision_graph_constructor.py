@@ -16,6 +16,7 @@ from .image_segmentor import ImageSegmentor
 
 from transformers import AutoTokenizer, T5EncoderModel
 
+import clip
 import pdb
 
 class Predictor(RamPredictor):
@@ -31,14 +32,20 @@ class Predictor(RamPredictor):
 
 
 class VisionGraphConstructor:
-    def __init__(self, pretrained_ram_model_path='', device = 'cuda'):
+    def __init__(self, pretrained_ram_model_path='', text_encoder = 'clip', device = 'cuda'):
         self.sam_predictor, self.ram_predictor = self.load_ram_model(pretrained_ram_model_path, device)
         self.sam_predictor.model = self.sam_predictor.model.to(device)
         self.ram_predictor.model = self.ram_predictor.model.to(device)
         self.sam_predictor.model.eval()
         self.ram_predictor.model.eval()
-        self.tokenizer = AutoTokenizer.from_pretrained("t5-small")
-        self.t5_model = T5EncoderModel.from_pretrained("t5-small").to(device)
+        self.text_encoder = text_encoder
+        if text_encoder == 'clip':
+            self.clip_model, _ = clip.load("ViT-B/32", device=device)
+            self.clip_model.eval()
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained("t5-small")
+            self.t5_model = T5EncoderModel.from_pretrained("t5-small").to(device)
+            self.t5_model.eval()
 
     def load_ram_model(self, pretrained_ram_model_path, device):
         sam = build_sam(checkpoint = os.path.join(pretrained_ram_model_path, 'sam_vit_h_4b8939.pth'))
@@ -92,6 +99,7 @@ class VisionGraphConstructor:
         return topk_indices[:1][0], logit_score
 
 
+    @torch.no_grad()
     def __call__(self, pil_image, inst_seg):
         """Returns a graph data object using detectron instances and RAM relationships."""
         
@@ -114,11 +122,11 @@ class VisionGraphConstructor:
         node_classes = [COCO_PANOPTIC_CLASSES[c.item()].split('-')[0] for c in inst_seg.pred_classes.cpu()]
         edge_classes = [relation_classes[c.item()] for c in edge_attr]
 
-        graph_data = Data(x = inst_seg.pred_mask_embs.detach().cpu(),
-                        node_attr = self.encode_with_lm(node_classes).detach().cpu(),
+        graph_data = Data(x = inst_seg.pred_mask_embs.cpu(),
+                        node_attr = self.encode_with_lm(node_classes).cpu(),
                         node_names = node_classes,
                         edge_index = torch.tensor(edge_index).t(),
-                        edge_attr = self.encode_with_lm(edge_classes).detach().cpu(),
+                        edge_attr = self.encode_with_lm(edge_classes).cpu(),
                         edge_names = edge_classes).cpu()
 
         return graph_data
@@ -126,10 +134,14 @@ class VisionGraphConstructor:
     def encode_with_lm(self, texts):
         """Accepts a list of texts and returns a list of encoded texts."""
         if len(texts) > 0:
-            inputs = self.tokenizer(texts, return_tensors="pt", padding=True).input_ids
-            inputs = inputs.cuda()
-            outputs = self.t5_model(inputs).last_hidden_state
-            return outputs.mean(dim=1)
+            if self.text_encoder == 'clip':
+                inputs = clip.tokenize(texts).cuda()
+                return self.clip_model.encode_text(inputs)
+            else:
+                inputs = self.tokenizer(texts, return_tensors="pt", padding=True).input_ids
+                inputs = inputs.cuda()
+                outputs = self.t5_model(inputs).last_hidden_state
+                return outputs.mean(dim=1)
         else:
             return torch.Tensor([])
 

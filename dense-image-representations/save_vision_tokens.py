@@ -17,15 +17,13 @@ from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
 import networkx as nx
 
-from data.winoground import Winoground
-from data.coco import CocoImages
-from data.aro import ARO
-
 from vision.vision_graph_constructor import VisionGraphConstructor
 from vision.image_segmentor import ImageSegmentor
 from vision.seem_module.utils.constants import COCO_PANOPTIC_CLASSES
 
 from text.text_graph_constructor import TextGraphConstructor
+
+from data import datautils
 
 import torch.nn.functional as F
 
@@ -89,6 +87,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='coco')
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_workers', type=int, default=1)
+    parser.add_argument('--text_encoder', type=str, default='clip')
 
     args = parser.parse_args()
     
@@ -96,25 +95,13 @@ if __name__ == '__main__':
         transforms.Resize((512, 512), interpolation=Image.BICUBIC),
         transforms.PILToTensor()])
 
-    if args.dataset == 'coco':
-        train_dataset = CocoImages(root = '/fs/cml-datasets/coco/images/train2017/', 
-                                annFile = '/fs/cml-datasets/coco/annotations/captions_train2017.json', 
-                                transform = transform)
-
-    elif args.dataset == 'coco_val':
-        train_dataset = CocoImages(root = '/fs/cml-datasets/coco/images/val2017/', 
-                                annFile = '/fs/cml-datasets/coco/annotations/captions_val2017.json', 
-                                transform = transform)
-    
-    elif args.dataset == 'winoground':
-        train_dataset = Winoground(root = '/cmlscratch/nehamk/datasets/winoground',
-                                transform = transform)
-
-    elif 'aro' in args.dataset:
-        train_dataset = ARO(root = '/cmlscratch/nehamk/datasets/aro', transform = transform, task = args.dataset)
-
-    else:
-        raise ValueError('Invalid dataset')
+    train_dataset = datautils.get_dataset(
+        dataset_name = args.dataset,
+        transform = transform,
+        with_image_tokens = False, 
+        caption_return_policy = 'random',
+        return_image_sizes = True
+    )
 
     train_loader = DataLoader(
         train_dataset,
@@ -125,7 +112,7 @@ if __name__ == '__main__':
     )
 
     segmentor = ImageSegmentor(pretrained_model_path='pretrained_checkpoints', seem_config = 'vision/seem_module/configs/seem/focall_unicl_lang_demo.yaml')
-    vision_graph_constructor = VisionGraphConstructor(pretrained_ram_model_path='pretrained_checkpoints')
+    vision_graph_constructor = VisionGraphConstructor(pretrained_ram_model_path='pretrained_checkpoints', text_encoder = args.text_encoder)
 
     text_graph_constructor = TextGraphConstructor()
 
@@ -134,32 +121,32 @@ if __name__ == '__main__':
     # if not os.path.exists(f'{args.dataset}_graph_vis'):
     #     os.makedirs(f'{args.dataset}_graph_vis')
     
-    if not os.path.exists(f'{args.dataset}_visual_graph'):
-        os.makedirs(f'{args.dataset}_visual_graph')
+    # if not os.path.exists(f'{args.dataset}_visual_graph'):
+    #     os.makedirs(f'{args.dataset}_visual_graph')
 
-    if not os.path.exists(f'{args.dataset}_visual_tokens'):
-        os.makedirs(f'{args.dataset}_visual_tokens')
+    if not os.path.exists(f'{args.dataset}_visual_tokens_new'):
+        os.makedirs(f'{args.dataset}_visual_tokens_new')
 
     
     for i, batch in enumerate(train_loader):
         # One image at a time, Batch size = 1
-        images, image_sizes, image_ids = batch 
 
-        if 'winoground' in args.dataset:
-            text_tokens = glob.glob(f'{args.dataset}_text_tokens/{image_ids[0].item()}_*.pt')
-        else:
-            text_tokens = [0]
-        if len(text_tokens) == 0:
+        images = batch['images']
+        image_sizes = batch['im_sizes']
+        image_ids = batch['ids'] 
+        captions = batch['captions']
+
+        if len(captions) == 0:
             continue
         j = 0
-        for j in range(len(text_tokens)):
+        for j in range(len(captions)):
             # Multiple images per caption (winoground case)
             if len(images) > 1:
                 image, image_size, image_id = images[j].squeeze(), image_sizes[j].squeeze(), image_ids[j].squeeze()
             else:
                 image, image_size, image_id = images.squeeze(), image_sizes.squeeze(), image_ids.squeeze()
            
-            if os.path.exists(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_edge_tokens.pt'):
+            if os.path.exists(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_edge_tokens.pt'):
                 continue
             
             # parsed_caption = json.load(open(parsed_captions[j]))
@@ -199,44 +186,48 @@ if __name__ == '__main__':
             # box_iou_matrix = box_iou(text_graph_guided_inst_seg.pred_boxes.tensor, inst_seg.pred_boxes.tensor)
             # matches = torch.where(mask_iou_matrix > 0.5)
 
-            visual_graph = vision_graph_constructor(original_image, inst_seg).cpu()
+            with torch.no_grad():
+                visual_graph = vision_graph_constructor(original_image, inst_seg).cpu()
             # visualize_graph(visual_graph, f'{args.dataset}_graph_vis/{image_id.item()}_{j}.png')
             # torch.save(visual_graph, f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt')
 
 
-            # num_tokens = visual_graph.x.shape[0] + len(visual_graph.edge_names)
-            # attention_mask = torch.zeros((num_tokens, num_tokens))
-            # i = 0
-            # # attend only where necessary
-            # for edge in visual_graph.edge_index.T:
-            #     attention_mask[edge[0], edge[1]] = 1 # directional
-            #     attention_mask[edge[0], visual_graph.x.shape[0] + i] = 1 # node 1 to edge
-            #     attention_mask[edge[1], visual_graph.x.shape[0] + i] = 1 # node 2 to edge
-            #     attention_mask[visual_graph.x.shape[0] + i, edge[0]] = 1 # edge to node 1
-            #     attention_mask[visual_graph.x.shape[0] + i, edge[1]] = 1 # edge to node 2
+            num_tokens = visual_graph.x.shape[0] + len(visual_graph.edge_names)
+            attention_mask = torch.zeros((num_tokens, num_tokens))
+            i = 0
+            # attend only where necessary
+            for edge in visual_graph.edge_index.T:
+                attention_mask[edge[0], edge[1]] = 7 # directional
+                attention_mask[edge[0], visual_graph.x.shape[0] + i] = 6 # node 1 to edge
+                attention_mask[edge[1], visual_graph.x.shape[0] + i] = 6 # node 2 to edge
+                attention_mask[visual_graph.x.shape[0] + i, edge[0]] = 5 # edge to node 1
+                attention_mask[visual_graph.x.shape[0] + i, edge[1]] = 5 # edge to node 2
 
-            # bboxes = inst_seg.pred_boxes
-            # for b1 in range(bboxes.tensor.shape[0]):
-            #     dists = []
-            #     for b2 in range(bboxes.tensor.shape[0]):
-            #         dists.append(calculate_bbox_distance(bboxes.tensor[b1], bboxes.tensor[b2]))
+            bboxes = inst_seg.pred_boxes
+            for b1 in range(bboxes.tensor.shape[0]):
+                dists = []
+                for b2 in range(bboxes.tensor.shape[0]):
+                    dists.append(calculate_bbox_distance(bboxes.tensor[b1], bboxes.tensor[b2]))
                 
-            #     dists = torch.stack(dists)
-            #     for idx in dists.sort().indices[:2]:
-            #         if idx == b1:
-            #             continue
-            #         attention_mask[b1, idx] = 1
+                dists = torch.stack(dists)
+                nn = 4
+                for idx in dists.sort().indices[:4]:
+                    if idx == b1:
+                        continue
+                    attention_mask[b1, idx] = nn
+                    nn -= 1
 
             # visual_tokens = torch.cat([visual_graph.x, visual_graph.edge_attr], dim = 0)
 
-            torch.save(image_features, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_image_features.pt')
-            torch.save(visual_graph.x, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_node_tokens.pt')
-            torch.save(visual_graph.edge_attr, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_edge_tokens.pt')
-            # torch.save(attention_mask, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_attention_mask.pt')
+            torch.save(image_features, f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_image_features.pt')
+            torch.save(visual_graph.x, f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_node_tokens.pt')
+            torch.save(visual_graph.edge_attr, f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_edge_tokens.pt')
+            torch.save(attention_mask, f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_attention_mask.pt')
 
-            os.chmod(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_image_features.pt', 0o0777)
-            os.chmod(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_node_tokens.pt', 0o0777)
-            os.chmod(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_edge_tokens.pt', 0o0777)
+            os.chmod(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_image_features.pt', 0o0777)
+            os.chmod(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_node_tokens.pt', 0o0777)
+            os.chmod(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_edge_tokens.pt', 0o0777)
+            os.chmod(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_attention_mask.pt', 0o0777)
             
             # Match the nodes of visual instances and text graph using T5 embeddings 
             # Optionally match based on the nouns in the text nodes

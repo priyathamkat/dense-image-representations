@@ -8,11 +8,17 @@ import os
 import glob
 import pdb
 import clip
+import shutil 
+import re
 
 from losses import ContrastiveLoss
 from modules import VisionLanguageEncoder
 from data.datautils import get_dataset
 import utils
+
+from accelerate.utils import DistributedDataParallelKwargs
+from accelerate import Accelerator
+
 
 def forward_pass(vision_language_encoder, batch):
     image_tokens = batch['image_tokens'].cuda()
@@ -51,6 +57,7 @@ def train(
     contrastive_loss: ContrastiveLoss,
     checkpoint_dir: str,
     args: argparse.Namespace,
+    accelerator: Accelerator,
 ):
     """
     Trains the image and text encoders (and the projection heads) using contrastive learning.
@@ -72,13 +79,12 @@ def train(
 
     start_epoch = 0
     # load checkpoint if exists
-    ckpts = sorted(glob.glob(f"{checkpoint_dir}/model_*.pth.tar"), key=os.path.getmtime, reverse=True)
+    ckpts = sorted(glob.glob(f"{checkpoint_dir}/model_*"), key=os.path.getmtime, reverse=True)
     if len(ckpts) > 0:
-        print(f"Loading state dict {ckpts[0]}")
-        state = torch.load(ckpts[0])
-        vision_language_encoder.load_state_dict(state['state_dict'])
-        optimizer.load_state_dict(state['optimizer_state'])
-        start_epoch = state['epoch'] + 1
+        accelerator.wait_for_everyone()
+        print(f"Loading state {ckpts[0]}")
+        start_epoch = int(re.findall(r'model_(\d+)', ckpts[0])[0]) + 1
+        accelerator.load_state(input_dir=checkpoint_dir)
 
     
     for epoch in range(start_epoch, args.epochs):
@@ -95,32 +101,44 @@ def train(
             loss = contrastive_loss(text_embeddings, image_embeddings)
 
             optimizer.zero_grad()
-            loss.backward()
+            accelerator.backward(loss)
             optimizer.step()
 
             step = (len(train_dataloader.dataset) // args.batch_size) * epoch + i
             lr_scheduler(step)
 
-            wandb.log({"loss": loss.item(), "learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
+            accelerator.log(
+                {
+                    "loss": loss.item(),
+                    "learning_rate": optimizer.param_groups[0]["lr"],
+                },
+            )
 
             epoch_loss += loss.item() * batch['captions'].shape[0]
 
         epoch_loss /= len(train_dataloader.dataset)
 
-        wandb.log({"epoch_training_loss": loss})
+        accelerator.log({"epoch_training_loss": epoch_loss})
 
         if epoch % args.validation_epochs == 0:
-            evaluate(vision_language_encoder, tokenizer, val_dataloader, contrastive_loss, args)
+            evaluate(
+                vision_language_encoder,
+                tokenizer,
+                val_dataloader,
+                contrastive_loss,
+                args,
+                accelerator,
+            )
 
         if epoch % args.checkpoint_epochs == 0 or epoch == args.epochs - 1:
-            state = {'state_dict': vision_language_encoder.state_dict(), 
-                    'epoch': epoch,
-                    'optimizer_state': optimizer.state_dict()}
-            ckpts = glob.glob(f"{checkpoint_dir}/model_*.pt*")
-            for ckpt in ckpts:
-                os.remove(ckpt)
-            torch.save(state, f"{checkpoint_dir}/model_{epoch}.pth.tar")
+            accelerator.wait_for_everyone()
 
+            ckpts = glob.glob(f"{checkpoint_dir}/model_*")
+            for ckpt in ckpts:
+                shutil.rmtree(ckpt, ignore_errors=True)
+            
+            accelerator.save_state(output_dir=f"{checkpoint_dir}")
+            accelerator.save_model(vision_language_encoder, f"{checkpoint_dir}/model_{epoch}")
 
 def evaluate(
     vision_language_encoder: VisionLanguageEncoder,
@@ -128,6 +146,7 @@ def evaluate(
     val_dataloader: DataLoader,
     contrastive_loss: ContrastiveLoss, 
     args: argparse.Namespace,
+    accelerator: Accelerator,
 ):
     """
     Evaluate the performance of the models on the validation dataset.
@@ -173,27 +192,34 @@ def evaluate(
     sim_1_2 = torch.matmul(x1, x2.T)
     
     diag_sim_v_v, off_diag_sim_v_v = utils.get_avg_sim(sim_1_1)
-    wandb.log({"diag_sim_v_v": diag_sim_v_v, "off_diag_sim_v_v": off_diag_sim_v_v})
+    accelerator.log(
+        {"diag_sim_v_v": diag_sim_v_v, "off_diag_sim_v_v": off_diag_sim_v_v}
+    )
 
     diag_sim_t_t, off_diag_sim_t_t = utils.get_avg_sim(sim_2_2)
-    wandb.log({"diag_sim_t_t": diag_sim_t_t, "off_diag_sim_t_t": off_diag_sim_t_t})
+    accelerator.log(
+        {"diag_sim_t_t": diag_sim_t_t, "off_diag_sim_t_t": off_diag_sim_t_t}
+    )
 
     diag_sim_v_t, off_diag_sim_v_t = utils.get_avg_sim(sim_1_2)
-    wandb.log({"diag_sim_v_t": diag_sim_v_t, "off_diag_sim_v_t": off_diag_sim_v_t})   
+    accelerator.log(
+        {"diag_sim_v_t": diag_sim_v_t, "off_diag_sim_v_t": off_diag_sim_v_t}
+    )
 
-    utils.get_retrieval_score(sim_1_2, log_name='v_t')
+    utils.get_retrieval_score(sim_1_2, log_name='v_t', accelerator=accelerator)
     sim_2_1 = sim_1_2.T
-    utils.get_retrieval_score(sim_2_1, log_name='t_v')
+    utils.get_retrieval_score(sim_2_1, log_name='t_v', accelerator=accelerator)
     
     loss /= len(val_dataloader.dataset)
 
-    wandb.log({"validation_loss": loss})
+    accelerator.log({"validation_loss": loss})
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="VQA Evaluation of Generated T2I CompBench color dataset")
 
     parser.add_argument('--exp_name', type=str, required=True)
+    parser.add_argument('--result_dir', type=str, required=True)
 
     parser.add_argument('--dataset', type=str, required=True)
 
@@ -222,21 +248,16 @@ def parse_args():
     return args
 
 
-def init_wandb(args):
-    wandb.login()
-    wandb.init(
-        name = args.exp_name,
-        project="graph-clip",
-        config=args,
-    )
-
-
 def main():
     args = parse_args()
+    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(log_with="wandb", kwargs_handlers=[kwargs])
+
+    accelerator.init_trackers(project_name="graph-clip", init_kwargs={"wandb":{"name":args.exp_name}}, config=args)
 
     clip_model = None
     if args.text_encoder == 'clip':
-        clip_model, _ = clip.load("ViT-B/32", device='cuda')
+        clip_model, _ = clip.load("ViT-B/32")
         clip_model = clip_model.to(torch.float32)
 
     vision_language_encoder = VisionLanguageEncoder(projection_dim=args.projection_dim,
@@ -249,8 +270,7 @@ def main():
                                                     clip_model=clip_model,
                                                     transformer=args.transformer,)
 
-    vision_language_encoder = vision_language_encoder.cuda()
-    vision_language_encoder = nn.DataParallel(vision_language_encoder)
+    vision_language_encoder = accelerator.prepare(vision_language_encoder)
 
     tokenizer = utils.get_tokenizer(args.text_encoder)
 
@@ -290,10 +310,11 @@ def main():
     warmup_steps = (len(dataset) // args.batch_size) * args.warmup 
     lr_scheduler = utils.cosine_lr(optimizer, args.lr, warmup_steps, total_steps)
 
-    init_wandb(args)
-    wandb.watch(vision_language_encoder, log="all")
+    train_dataloader, val_dataloader, optimizer, lr_scheduler = accelerator.prepare(
+        train_dataloader, val_dataloader, optimizer, lr_scheduler
+    )
 
-    checkpoint_dir = f"results_clip32/{args.exp_name}"
+    checkpoint_dir = f"{args.result_dir}/{args.exp_name}"
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
 
@@ -307,7 +328,9 @@ def main():
         ContrastiveLoss(),
         checkpoint_dir,
         args,
+        accelerator,
     )
+    accelerator.end_training()
 
 
 if __name__ == "__main__":

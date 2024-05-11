@@ -38,7 +38,8 @@ def get_dataset(dataset_name,
                 image_tokens_root = None,
                 transform = None,
                 with_image_tokens = False, 
-                caption_return_policy = 'all'):
+                caption_return_policy = 'all',
+                return_image_sizes = False):
     if dataset_name == 'coco' or dataset_name == 'coco_val':
         from .coco import CocoImagesAndCaptions, CocoImageTokensAndCaptions
         annFile = '/fs/cml-datasets/coco/annotations/captions_train2017.json'
@@ -67,7 +68,8 @@ def get_dataset(dataset_name,
         else:
             dataset = VG_RelationImagesAndCaptions(image_preprocess = transform,
                                                     download = False,
-                                                    root_dir = '/cmlscratch/nehamk/datasets/aro')
+                                                    root_dir = '/cmlscratch/nehamk/datasets/aro',
+                                                    return_image_sizes=return_image_sizes)
 
     elif dataset_name == 'aro_vga':
         from .aro import VG_AttributionImagesAndCaptions, VG_AttributionImageTokensAndCaptions
@@ -78,7 +80,8 @@ def get_dataset(dataset_name,
         else:
             dataset = VG_AttributionImagesAndCaptions(image_preprocess = transform,
                                                       download = False,
-                                                      root_dir = '/cmlscratch/nehamk/datasets/aro')
+                                                      root_dir = '/cmlscratch/nehamk/datasets/aro',
+                                                      return_image_sizes=return_image_sizes)
 
     elif dataset_name == 'aro_coco_order':
         from .aro import COCO_OrderImagesAndCaptions, COCO_OrderImageTokensAndCaptions
@@ -89,7 +92,8 @@ def get_dataset(dataset_name,
         else:
             dataset = COCO_OrderImagesAndCaptions(image_preprocess = transform,
                                                   download = False,
-                                                  root_dir = '/cmlscratch/nehamk/datasets/aro/coco')
+                                                  root_dir = '/cmlscratch/nehamk/datasets/aro/coco',
+                                                  return_image_sizes=return_image_sizes)
 
     elif dataset_name == 'winoground':
         from .winoground import WinogroundImagesAndCaptions, WinogroundImageTokensAndCaptions
