@@ -9,6 +9,7 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 import pdb
 
+
 class MLP(nn.Module):
     def __init__(self, in_features, out_features, num_layers=3) -> None:
         super().__init__()
@@ -79,8 +80,9 @@ class VisionLanguageEncoder(nn.Module):
         context_length: int = 77,
         preembed_nodes: bool = False,
         text_encoder: str = "t5_small",
-        transformer = 'clip',
-        clip_model = None,
+        transformer="clip",
+        clip_model=None,
+        max_attention_rank: int = 7,
         #  vocab_size: int = 49408,
     ):
         super().__init__()
@@ -90,7 +92,7 @@ class VisionLanguageEncoder(nn.Module):
 
         self.transformer = transformer
         self.pre_mlp = None
-        if self.transformer == 'clip':
+        if self.transformer == "clip":
             # self.pre_mlp = nn.Sequential(
             #     nn.Linear(512, 512),
             #     nn.ReLU(),
@@ -103,7 +105,7 @@ class VisionLanguageEncoder(nn.Module):
             self.ln_final = clip_model.visual.ln_post
             self.image_projection = clip_model.visual.proj
 
-        else:   
+        else:
             self.image_transformer = TransformerEncoder(
                 encoder_layer=TransformerEncoderLayer(
                     d_model=transformer_width,
@@ -114,20 +116,26 @@ class VisionLanguageEncoder(nn.Module):
             )
             self.ln_final = nn.LayerNorm(transformer_width)
             self.image_projection = nn.Parameter(torch.empty(512, projection_dim))
-            nn.init.normal_(self.image_projection, std=transformer_width ** -0.5)
+            self.attention_weights = nn.Parameter(torch.empty(max_attention_rank))
+            nn.init.normal_(self.image_projection, std=transformer_width**-0.5)
 
         self.text_encoder = text_encoder
         # projection_dim = 512 # clip output is 512 (no additional projector needed), so just project to 512 for consistency
-        if 't5' in text_encoder:
-            self.text_transformer = T5EncoderModel.from_pretrained("google-t5/t5-small") if text_encoder == 't5_small' else T5EncoderModel.from_pretrained("google-t5/t5-base")
+        if "t5" in text_encoder:
+            self.text_transformer = (
+                T5EncoderModel.from_pretrained("google-t5/t5-small")
+                if text_encoder == "t5_small"
+                else T5EncoderModel.from_pretrained("google-t5/t5-base")
+            )
             text_embed_dim = self.text_transformer.config.d_model
-            self.text_projection = nn.Parameter(torch.empty(text_embed_dim, projection_dim))
-            nn.init.normal_(self.text_projection, std=transformer_width ** -0.5)
+            self.text_projection = nn.Parameter(
+                torch.empty(text_embed_dim, projection_dim)
+            )
+            nn.init.normal_(self.text_projection, std=transformer_width**-0.5)
 
         else:
             self.clip_model = clip_model
-            
-    
+
         self.positional_embeddings = nn.ParameterDict(
             {
                 EDGES: nn.Parameter(torch.empty((transformer_width,))),
@@ -153,7 +161,7 @@ class VisionLanguageEncoder(nn.Module):
         # nn.init.normal_(self.token_embedding.weight, std=0.02)
         for _, v in self.positional_embeddings.items():
             nn.init.normal_(v, std=0.01)
-        
+
         # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
         # attn_std = self.transformer.width ** -0.5
         # fc_std = (2 * self.transformer.width) ** -0.5
@@ -186,7 +194,7 @@ class VisionLanguageEncoder(nn.Module):
         tokens = tokens.clone()
         if self.pre_mlp is not None:
             tokens = self.pre_mlp(tokens)
-        
+
         image_embedding = image_embedding.unsqueeze(1)
         max_num_nodes = max(num_nodes)
         nodes = tokens[:, :max_num_nodes, :]
@@ -220,44 +228,48 @@ class VisionLanguageEncoder(nn.Module):
             )
             x = x[:, : self.context_length, :]
 
-        if self.transformer == 'clip':
+        if self.transformer == "clip":
             x = x.permute(1, 0, 2)
             x = self.image_transformer(x)
             x = x.permute(1, 0, 2)
 
         else:
-            x = self.image_transformer(
-                x, mask=image_attention_mask
-            )
+            attention_weights = torch.exp(self.attention_weights)
+            attention_weights = torch.cumsum(attention_weights, dim=0)
+            image_attention_mask = attention_weights[image_attention_mask]
+            x = self.image_transformer(x, mask=image_attention_mask)
 
         x = self.ln_final(x)
         image_embeddings = x @ self.image_projection
         return image_embeddings
 
     def encode_text(self, text_tokens):
-        if 't5' in self.text_encoder:
+        if "t5" in self.text_encoder:
             text_features = self.text_transformer(text_tokens).last_hidden_state
             text_embeddings = text_features @ self.text_projection
         else:
             text_embeddings = self.clip_model.encode_text(text_tokens)
         return text_embeddings
 
-    def forward(self, 
-                image_tokens,
-                image_features,
-                num_non_pad_tokens,
-                num_nodes,
-                text_tokens,
-                image_attention_mask = None):
-        image_embeddings = self.encode_image(image_tokens,
-                                            image_features,
-                                            num_non_pad_tokens,
-                                            num_nodes,
-                                            image_attention_mask)
+    def forward(
+        self,
+        image_tokens,
+        image_features,
+        num_non_pad_tokens,
+        num_nodes,
+        text_tokens,
+        image_attention_mask=None,
+    ):
+        image_embeddings = self.encode_image(
+            image_tokens,
+            image_features,
+            num_non_pad_tokens,
+            num_nodes,
+            image_attention_mask,
+        )
         text_embeddings = self.encode_text(text_tokens)
 
         return image_embeddings, text_embeddings
-
 
 
 class VisionLanguageEncoderBase(nn.Module):
@@ -266,38 +278,45 @@ class VisionLanguageEncoderBase(nn.Module):
         projection_dim: int,
         text_encoder: str = "t5_small",
         image_encoder: str = "vit",
-        clip_model = None,
+        clip_model=None,
     ):
         super().__init__()
 
         self.image_encoder = image_encoder
         if image_encoder == "vit":
-            self.image_transformer = ViTModel.from_pretrained('google/vit-base-patch16-224-in21k').to('cuda')
+            self.image_transformer = ViTModel.from_pretrained(
+                "google/vit-base-patch16-224-in21k"
+            ).to("cuda")
             image_embed_dim = self.image_transformer.config.hidden_size
         else:
             self.clip_model = clip_model
             image_embed_dim = 512
 
         self.text_encoder = text_encoder
-        if 't5' in text_encoder:
-            self.text_transformer = T5EncoderModel.from_pretrained("google-t5/t5-small") if text_encoder == 't5_small' else T5EncoderModel.from_pretrained("google-t5/t5-base")
+        if "t5" in text_encoder:
+            self.text_transformer = (
+                T5EncoderModel.from_pretrained("google-t5/t5-small")
+                if text_encoder == "t5_small"
+                else T5EncoderModel.from_pretrained("google-t5/t5-base")
+            )
             text_embed_dim = self.text_transformer.config.d_model
         else:
             self.clip_model = clip_model
             text_embed_dim = 512
 
         self.text_projection = nn.Parameter(torch.empty(text_embed_dim, projection_dim))
-        nn.init.normal_(self.text_projection, std=text_embed_dim ** -0.5)
+        nn.init.normal_(self.text_projection, std=text_embed_dim**-0.5)
 
-        self.image_projection = nn.Parameter(torch.empty(image_embed_dim, projection_dim))
-        nn.init.normal_(self.image_projection, std=image_embed_dim ** -0.5)
-            
+        self.image_projection = nn.Parameter(
+            torch.empty(image_embed_dim, projection_dim)
+        )
+        nn.init.normal_(self.image_projection, std=image_embed_dim**-0.5)
 
     def encode_image(
         self,
         images,
     ):
-        if self.image_encoder == 'vit':
+        if self.image_encoder == "vit":
             image_features = self.image_transformer(images).pooler_output
             image_embeddings = image_features @ self.image_projection
         else:
@@ -305,22 +324,24 @@ class VisionLanguageEncoderBase(nn.Module):
         return image_embeddings
 
     def encode_text(self, text_tokens):
-        if 't5' in self.text_encoder:
+        if "t5" in self.text_encoder:
             text_features = self.text_transformer(text_tokens).last_hidden_state
             text_embeddings = text_features @ self.text_projection
         else:
             text_embeddings = self.clip_model.encode_text(text_tokens)
         return text_embeddings
 
-    def forward(self, 
-                images,
-                text_tokens,):
+    def forward(
+        self,
+        images,
+        text_tokens,
+    ):
         image_embeddings = self.encode_image(images)
         text_embeddings = self.encode_text(text_tokens)
 
         return image_embeddings, text_embeddings
 
-    
+
 if __name__ == "__main__":
     vle = VisionLanguageEncoder(16, 16, 16, 8, 6, 32, preembed_nodes=True)
     num_nodes = [1, 2, 3, 4, 5]
