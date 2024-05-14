@@ -21,12 +21,12 @@ from accelerate import Accelerator
 
 
 def forward_pass(vision_language_encoder, batch):
-    image_tokens = batch['image_tokens'].cuda()
-    image_features = batch['image_features'].cuda()
-    num_non_pad_tokens = batch['num_non_pad_tokens'].cuda()
-    num_nodes = batch['num_nodes'].cuda()
-    # image_attention_mask = batch[4].cuda()
-    text_tokens = batch['captions'].cuda()
+    image_tokens = batch['image_tokens']
+    image_features = batch['image_features']
+    num_non_pad_tokens = batch['num_non_pad_tokens']
+    num_nodes = batch['num_nodes']
+    text_tokens = batch['captions']
+    image_attention_mask = batch['image_attention_mask']
     
     # image_attention_mask = image_attention_mask.float().masked_fill(image_attention_mask == 0, float('-inf')).masked_fill(image_attention_mask == 1, float(0.0))
     # image_attention_mask = ~(image_attention_mask.bool())
@@ -37,6 +37,7 @@ def forward_pass(vision_language_encoder, batch):
                                                                 num_non_pad_tokens,
                                                                 num_nodes,
                                                                 text_tokens,
+                                                                image_attention_mask
                                                                 )
     if len(image_embeddings.shape) == 3:
         image_embeddings = image_embeddings.mean(dim=1)
@@ -111,6 +112,7 @@ def train(
                 {
                     "loss": loss.item(),
                     "learning_rate": optimizer.param_groups[0]["lr"],
+                    "epoch": epoch,
                 },
             )
 
@@ -227,6 +229,7 @@ def parse_args():
     parser.add_argument('--num_heads', type=int, default=8)
     parser.add_argument('--projection_dim', type=int, default=512)
     parser.add_argument('--preembed_nodes', action='store_true')
+    parser.add_argument('--use_attention_mask', action='store_true')
     parser.add_argument('--text_encoder', type=str, default='t5_small')
     parser.add_argument('--transformer', type=str, default='clip')
 
@@ -268,7 +271,11 @@ def main():
                                                     preembed_nodes=args.preembed_nodes,
                                                     text_encoder=args.text_encoder,
                                                     clip_model=clip_model,
-                                                    transformer=args.transformer,)
+                                                    transformer=args.transformer,
+                                                    use_attention_mask=args.use_attention_mask)
+
+    device = accelerator.device
+    vision_language_encoder = vision_language_encoder.to(device)
 
     vision_language_encoder = accelerator.prepare(vision_language_encoder)
 
@@ -276,13 +283,13 @@ def main():
 
     dataset = get_dataset(
         dataset_name = args.dataset,
-        image_tokens_root = f'{args.dataset}_visual_tokens',
+        image_tokens_root = f'{args.dataset}_visual_tokens_new',
         with_image_tokens = True, 
         caption_return_policy = 'random'
     )
     val_dataset = get_dataset(
         dataset_name = args.dataset + '_val',
-        image_tokens_root = f'{args.dataset}_val_visual_tokens',
+        image_tokens_root = f'{args.dataset}_val_visual_tokens_new',
         with_image_tokens = True, 
         caption_return_policy = 'random'
     )

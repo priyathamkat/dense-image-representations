@@ -1,17 +1,19 @@
 import re
 import glob
-import random
-import torch
 from torch.utils.data import Dataset
 from torchvision.datasets.coco import CocoDetection
 import numpy as np
 from .datautils import get_image_tokens, get_return_captions
 
+import pdb
+
 class CocoImagesAndCaptions(CocoDetection):
-    def __init__(self, root, annFile, transform, caption_return_policy='all'):
+    def __init__(self, root, annFile, transform, caption_return_policy='all', hf_vit_processor = False):
         super().__init__(root, annFile, transform)
         self.annFile = annFile
         self.caption_return_policy = caption_return_policy
+        self.transform = transform
+        self.hf_vit_processor = hf_vit_processor
         
     def __getitem__(self, index):
         id = self.ids[index]
@@ -22,9 +24,9 @@ class CocoImagesAndCaptions(CocoDetection):
 
         im_size = np.array(image.size)
 
-        if self.transforms is not None:
-            image, target = self.transforms(image, target)
-            if isinstance(image, dict):
+        if self.transform is not None:
+            image = self.transform(image)
+            if self.hf_vit_processor:
                 image = image['pixel_values'][0]
 
         ret = {
@@ -42,6 +44,9 @@ class CocoImageTokensAndCaptions(CocoDetection):
         self.annFile = annFile
         self.image_tokens_root = image_tokens_root
         self.caption_return_policy = caption_return_policy
+
+        existing_ids = [int(re.findall(r'(\d+)_0', f)[0]) for f in glob.glob(f'{image_tokens_root}/*_0_edge_tokens.pt')]
+        self.ids = [i for i in self.ids if i in existing_ids]
         
     def __getitem__(self, index):
         id = self.ids[index]

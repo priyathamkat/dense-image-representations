@@ -80,13 +80,9 @@ def train(
 
         for i, batch in enumerate(train_dataloader):
             # tokenize
-            batch["captions"] = utils.tokenize(
-                batch["captions"], tokenizer, args.text_encoder
-            )
+            batch["captions"] = utils.tokenize(batch["captions"], tokenizer, args.text_encoder)
 
-            image_embeddings, text_embeddings = forward_pass(
-                vision_language_encoder, batch
-            )
+            image_embeddings, text_embeddings = forward_pass(vision_language_encoder, batch)
 
             loss = contrastive_loss(text_embeddings, image_embeddings)
 
@@ -101,6 +97,7 @@ def train(
                 {
                     "loss": loss.item(),
                     "learning_rate": optimizer.param_groups[0]["lr"],
+                    "epoch": epoch,
                 },
             )
 
@@ -203,9 +200,9 @@ def evaluate(
         {"diag_sim_v_t": diag_sim_v_t, "off_diag_sim_v_t": off_diag_sim_v_t}
     )
 
-    utils.get_retrieval_score(sim_1_2, log_name="v_t")
+    utils.get_retrieval_score(sim_1_2, log_name="v_t", accelerator=accelerator)
     sim_2_1 = sim_1_2.T
-    utils.get_retrieval_score(sim_2_1, log_name="t_v")
+    utils.get_retrieval_score(sim_2_1, log_name="t_v", accelerator=accelerator)
 
     loss /= len(val_dataloader.dataset)
 
@@ -262,13 +259,13 @@ def main():
         image_encoder=args.image_encoder,
         clip_model=clip_model,
     )
-    vision_language_encoder = accelerator.prepare(vision_language_encoder)
-    wandb.watch(vision_language_encoder, log="all")
+    device = accelerator.device
+    vision_language_encoder = vision_language_encoder.to(device)
 
-    if args.image_encoder == "vit":
-        image_processor = ViTImageProcessor.from_pretrained(
-            "google/vit-base-patch16-224-in21k"
-        )
+    vision_language_encoder = accelerator.prepare(vision_language_encoder)
+
+    if 'vit' in args.image_encoder:
+        image_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch32-224-in21k')
     else:
         image_processor = clip_image_processor
 
@@ -279,12 +276,14 @@ def main():
         transform=image_processor,
         with_image_tokens=False,
         caption_return_policy="random",
+        hf_vit_processor = 'vit' in args.image_encoder,
     )
     val_dataset = get_dataset(
         dataset_name=args.dataset + "_val",
         transform=image_processor,
         with_image_tokens=False,
         caption_return_policy="random",
+        hf_vit_processor = 'vit' in args.image_encoder,
     )
 
     train_dataloader = DataLoader(

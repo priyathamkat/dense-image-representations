@@ -121,13 +121,12 @@ if __name__ == '__main__':
     # if not os.path.exists(f'{args.dataset}_graph_vis'):
     #     os.makedirs(f'{args.dataset}_graph_vis')
     
-    # if not os.path.exists(f'{args.dataset}_visual_graph'):
-    #     os.makedirs(f'{args.dataset}_visual_graph')
+    if not os.path.exists(f'{args.dataset}_visual_graph'):
+        os.makedirs(f'{args.dataset}_visual_graph')
 
-    if not os.path.exists(f'{args.dataset}_visual_tokens_new'):
-        os.makedirs(f'{args.dataset}_visual_tokens_new')
+    if not os.path.exists(f'{args.dataset}_visual_tokens'):
+        os.makedirs(f'{args.dataset}_visual_tokens')
 
-    
     for i, batch in enumerate(train_loader):
         # One image at a time, Batch size = 1
 
@@ -146,8 +145,8 @@ if __name__ == '__main__':
             else:
                 image, image_size, image_id = images.squeeze(), image_sizes.squeeze(), image_ids.squeeze()
            
-            if os.path.exists(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_edge_tokens.pt'):
-                continue
+            # if os.path.exists(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_edge_tokens.pt'):
+            #     continue
             
             # parsed_caption = json.load(open(parsed_captions[j]))
             # text_graph = text_graph_constructor(parsed_caption).cpu()
@@ -189,7 +188,7 @@ if __name__ == '__main__':
             with torch.no_grad():
                 visual_graph = vision_graph_constructor(original_image, inst_seg).cpu()
             # visualize_graph(visual_graph, f'{args.dataset}_graph_vis/{image_id.item()}_{j}.png')
-            # torch.save(visual_graph, f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt')
+            torch.save(visual_graph, f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt')
 
 
             num_tokens = visual_graph.x.shape[0] + len(visual_graph.edge_names)
@@ -214,20 +213,20 @@ if __name__ == '__main__':
                 for idx in dists.sort().indices[:4]:
                     if idx == b1:
                         continue
-                    attention_mask[b1, idx] = nn
+                    attention_mask[b1, idx] = max(nn, attention_mask[b1, idx])
                     nn -= 1
 
             # visual_tokens = torch.cat([visual_graph.x, visual_graph.edge_attr], dim = 0)
 
-            torch.save(image_features, f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_image_features.pt')
-            torch.save(visual_graph.x, f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_node_tokens.pt')
-            torch.save(visual_graph.edge_attr, f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_edge_tokens.pt')
-            torch.save(attention_mask, f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_attention_mask.pt')
+            torch.save(image_features, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_image_features.pt')
+            torch.save(visual_graph.x, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_node_tokens.pt')
+            torch.save(visual_graph.edge_attr, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_edge_tokens.pt')
+            torch.save(attention_mask, f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_attention_mask.pt')
 
-            os.chmod(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_image_features.pt', 0o0777)
-            os.chmod(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_node_tokens.pt', 0o0777)
-            os.chmod(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_edge_tokens.pt', 0o0777)
-            os.chmod(f'{args.dataset}_visual_tokens_new/{image_id.item()}_{j}_attention_mask.pt', 0o0777)
+            # os.chmod(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_image_features.pt', 0o0777)
+            # os.chmod(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_node_tokens.pt', 0o0777)
+            # os.chmod(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_edge_tokens.pt', 0o0777)
+            # os.chmod(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_attention_mask.pt', 0o0777)
             
             # Match the nodes of visual instances and text graph using T5 embeddings 
             # Optionally match based on the nouns in the text nodes

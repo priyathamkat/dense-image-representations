@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from transformers import T5EncoderModel, ViTModel
+from transformers import T5EncoderModel, ViTModel, AutoConfig
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 import pdb
@@ -82,6 +82,7 @@ class VisionLanguageEncoder(nn.Module):
         text_encoder: str = "t5_small",
         transformer="clip",
         clip_model=None,
+        use_attention_mask = False,
         max_attention_rank: int = 7,
         #  vocab_size: int = 49408,
     ):
@@ -89,6 +90,7 @@ class VisionLanguageEncoder(nn.Module):
 
         self.context_length = context_length
         self.transformer_heads = transformer_heads
+        self.use_attention_mask = use_attention_mask
 
         self.transformer = transformer
         self.pre_mlp = None
@@ -234,10 +236,15 @@ class VisionLanguageEncoder(nn.Module):
             x = x.permute(1, 0, 2)
 
         else:
-            attention_weights = torch.exp(self.attention_weights)
-            attention_weights = torch.cumsum(attention_weights, dim=0)
-            image_attention_mask = attention_weights[image_attention_mask]
-            x = self.image_transformer(x, mask=image_attention_mask)
+            if self.use_attention_mask and image_attention_mask is not None:
+                # attention_weights = torch.exp(self.attention_weights)
+                # attention_weights = torch.cumsum(attention_weights, dim=0)
+                # image_attention_mask = attention_weights[image_attention_mask]
+
+                image_attention_mask = image_attention_mask.repeat(self.transformer_heads, 1, 1)
+                x = self.image_transformer(x, mask=image_attention_mask)
+            else:
+                x = self.image_transformer(x)
 
         x = self.ln_final(x)
         image_embeddings = x @ self.image_projection
@@ -283,10 +290,12 @@ class VisionLanguageEncoderBase(nn.Module):
         super().__init__()
 
         self.image_encoder = image_encoder
-        if image_encoder == "vit":
-            self.image_transformer = ViTModel.from_pretrained(
-                "google/vit-base-patch16-224-in21k"
-            ).to("cuda")
+        if 'vit' in image_encoder:
+            if image_encoder == 'vit_pretrained':
+                self.image_transformer = ViTModel.from_pretrained('google/vit-base-patch16-224-in21k').to('cuda')
+            else:
+                config = AutoConfig.from_pretrained('google/vit-base-patch32-224-in21k')
+                self.image_transformer = ViTModel(config).to('cuda')
             image_embed_dim = self.image_transformer.config.hidden_size
         else:
             self.clip_model = clip_model

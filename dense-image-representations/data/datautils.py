@@ -39,7 +39,8 @@ def get_dataset(dataset_name,
                 transform = None,
                 with_image_tokens = False, 
                 caption_return_policy = 'all',
-                return_image_sizes = False):
+                return_image_sizes = False,
+                hf_vit_processor = False):
     if dataset_name == 'coco' or dataset_name == 'coco_val':
         from .coco import CocoImagesAndCaptions, CocoImageTokensAndCaptions
         annFile = '/fs/cml-datasets/coco/annotations/captions_train2017.json'
@@ -57,7 +58,8 @@ def get_dataset(dataset_name,
             dataset = CocoImagesAndCaptions(root = image_root,
                                             annFile = annFile,
                                             transform = transform,
-                                            caption_return_policy=caption_return_policy)
+                                            caption_return_policy=caption_return_policy, 
+                                            hf_vit_processor = hf_vit_processor)
 
     elif dataset_name == 'aro_vgr':
         from .aro import VG_RelationImagesAndCaptions, VG_RelationImageTokensAndCaptions
@@ -69,7 +71,8 @@ def get_dataset(dataset_name,
             dataset = VG_RelationImagesAndCaptions(image_preprocess = transform,
                                                     download = False,
                                                     root_dir = '/cmlscratch/nehamk/datasets/aro',
-                                                    return_image_sizes=return_image_sizes)
+                                                    return_image_sizes=return_image_sizes,
+                                                    hf_vit_processor = hf_vit_processor)
 
     elif dataset_name == 'aro_vga':
         from .aro import VG_AttributionImagesAndCaptions, VG_AttributionImageTokensAndCaptions
@@ -81,7 +84,8 @@ def get_dataset(dataset_name,
             dataset = VG_AttributionImagesAndCaptions(image_preprocess = transform,
                                                       download = False,
                                                       root_dir = '/cmlscratch/nehamk/datasets/aro',
-                                                      return_image_sizes=return_image_sizes)
+                                                      return_image_sizes=return_image_sizes,
+                                                      hf_vit_processor = hf_vit_processor)
 
     elif dataset_name == 'aro_coco_order':
         from .aro import COCO_OrderImagesAndCaptions, COCO_OrderImageTokensAndCaptions
@@ -93,7 +97,19 @@ def get_dataset(dataset_name,
             dataset = COCO_OrderImagesAndCaptions(image_preprocess = transform,
                                                   download = False,
                                                   root_dir = '/cmlscratch/nehamk/datasets/aro/coco',
-                                                  return_image_sizes=return_image_sizes)
+                                                  return_image_sizes=return_image_sizes,
+                                                  hf_vit_processor = hf_vit_processor)
+            
+    elif dataset_name == 'aro_flickr_order':
+        from .aro import Flickr_OrderImagesAndCaptions, Flickr_OrderImageTokensAndCaptions
+        if with_image_tokens:
+            dataset = Flickr_OrderImageTokensAndCaptions(root_dir = '/cmlscratch/nehamk/datasets/aro/flickr',
+                                                        image_tokens_root = image_tokens_root)
+        else:
+            dataset = Flickr_OrderImagesAndCaptions(image_preprocess = transform,
+                                                    root_dir = '/cmlscratch/nehamk/datasets/aro/flickr',
+                                                    return_image_sizes=return_image_sizes,
+                                                    hf_vit_processor = hf_vit_processor)
 
     elif dataset_name == 'winoground':
         from .winoground import WinogroundImagesAndCaptions, WinogroundImageTokensAndCaptions
@@ -102,7 +118,8 @@ def get_dataset(dataset_name,
                                                        image_tokens_root = image_tokens_root)
         else:
             dataset = WinogroundImagesAndCaptions(root = '/cmlscratch/nehamk/datasets/winoground',
-                                                  transform = transform)
+                                                  transform = transform,
+                                                  hf_vit_processor = hf_vit_processor)
 
     else:
         raise ValueError(f'Dataset {dataset_name} not recognized')

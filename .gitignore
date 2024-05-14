@@ -174,3 +174,4 @@ GRIT/
 wandb/
 run_*.sh
 results*/
+old_tokens/
