@@ -66,12 +66,14 @@ def get_dataset(dataset_name,
         if with_image_tokens:
             dataset = VG_RelationImageTokensAndCaptions(download = False,
                                                         root_dir = '/cmlscratch/nehamk/datasets/aro',
-                                                        image_tokens_root = image_tokens_root)
+                                                        image_tokens_root = image_tokens_root,
+                                                        caption_return_policy=caption_return_policy)
         else:
             dataset = VG_RelationImagesAndCaptions(image_preprocess = transform,
                                                     download = False,
                                                     root_dir = '/cmlscratch/nehamk/datasets/aro',
                                                     return_image_sizes=return_image_sizes,
+                                                    caption_return_policy=caption_return_policy,
                                                     hf_vit_processor = hf_vit_processor)
 
     elif dataset_name == 'aro_vga':
@@ -79,12 +81,14 @@ def get_dataset(dataset_name,
         if with_image_tokens:
             dataset = VG_AttributionImageTokensAndCaptions(download = False,
                                                            root_dir = '/cmlscratch/nehamk/datasets/aro',
-                                                           image_tokens_root = image_tokens_root)
+                                                           image_tokens_root = image_tokens_root,
+                                                           caption_return_policy=caption_return_policy)
         else:
             dataset = VG_AttributionImagesAndCaptions(image_preprocess = transform,
                                                       download = False,
                                                       root_dir = '/cmlscratch/nehamk/datasets/aro',
                                                       return_image_sizes=return_image_sizes,
+                                                      caption_return_policy=caption_return_policy,
                                                       hf_vit_processor = hf_vit_processor)
 
     elif dataset_name == 'aro_coco_order':
@@ -92,33 +96,39 @@ def get_dataset(dataset_name,
         if with_image_tokens:
             dataset = COCO_OrderImageTokensAndCaptions(download = False,
                                                        root_dir = '/cmlscratch/nehamk/datasets/aro/coco',
-                                                       image_tokens_root = image_tokens_root)
+                                                       image_tokens_root = image_tokens_root,
+                                                       caption_return_policy=caption_return_policy)
         else:
             dataset = COCO_OrderImagesAndCaptions(image_preprocess = transform,
                                                   download = False,
                                                   root_dir = '/cmlscratch/nehamk/datasets/aro/coco',
                                                   return_image_sizes=return_image_sizes,
+                                                  caption_return_policy=caption_return_policy,
                                                   hf_vit_processor = hf_vit_processor)
             
     elif dataset_name == 'aro_flickr_order':
         from .aro import Flickr_OrderImagesAndCaptions, Flickr_OrderImageTokensAndCaptions
         if with_image_tokens:
             dataset = Flickr_OrderImageTokensAndCaptions(root_dir = '/cmlscratch/nehamk/datasets/aro/flickr',
-                                                        image_tokens_root = image_tokens_root)
+                                                        image_tokens_root = image_tokens_root,
+                                                        caption_return_policy=caption_return_policy)
         else:
             dataset = Flickr_OrderImagesAndCaptions(image_preprocess = transform,
                                                     root_dir = '/cmlscratch/nehamk/datasets/aro/flickr',
                                                     return_image_sizes=return_image_sizes,
+                                                    caption_return_policy=caption_return_policy,
                                                     hf_vit_processor = hf_vit_processor)
 
     elif dataset_name == 'winoground':
         from .winoground import WinogroundImagesAndCaptions, WinogroundImageTokensAndCaptions
         if with_image_tokens:
             dataset = WinogroundImageTokensAndCaptions(root = '/cmlscratch/nehamk/datasets/winoground',
-                                                       image_tokens_root = image_tokens_root)
+                                                       image_tokens_root = image_tokens_root,
+                                                       caption_return_policy=caption_return_policy)
         else:
             dataset = WinogroundImagesAndCaptions(root = '/cmlscratch/nehamk/datasets/winoground',
                                                   transform = transform,
+                                                  caption_return_policy=caption_return_policy,
                                                   hf_vit_processor = hf_vit_processor)
 
     else:

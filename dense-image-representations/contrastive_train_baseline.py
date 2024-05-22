@@ -19,10 +19,12 @@ from torch.utils.data import DataLoader
 from transformers import ViTImageProcessor
 from accelerate.utils import DistributedDataParallelKwargs
 
+from torchvision.models import ViT_B_16_Weights
+
 
 def forward_pass(vision_language_encoder, batch):
-    images = batch["images"]
-    text_tokens = batch["captions"]
+    images = batch["images"].cuda()
+    text_tokens = batch["captions"].cuda()
 
     image_embeddings, text_embeddings = vision_language_encoder(images, text_tokens)
 
@@ -264,7 +266,11 @@ def main():
 
     vision_language_encoder = accelerator.prepare(vision_language_encoder)
 
-    if 'vit' in args.image_encoder:
+    if args.image_encoder == 'vit_small':
+        image_processor = ViTImageProcessor.from_pretrained('facebook/dino-vits16')
+    elif args.image_encoder == 'vit_s':
+        image_processor = ViT_B_16_Weights.DEFAULT.transforms()
+    elif 'vit' in args.image_encoder:
         image_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch32-224-in21k')
     else:
         image_processor = clip_image_processor
@@ -276,14 +282,14 @@ def main():
         transform=image_processor,
         with_image_tokens=False,
         caption_return_policy="random",
-        hf_vit_processor = 'vit' in args.image_encoder,
+        hf_vit_processor = (args.image_encoder == 'vit_small') or (args.image_encoder == 'vit_base') or (args.image_encoder == 'vit'),
     )
     val_dataset = get_dataset(
         dataset_name=args.dataset + "_val",
         transform=image_processor,
         with_image_tokens=False,
         caption_return_policy="random",
-        hf_vit_processor = 'vit' in args.image_encoder,
+        hf_vit_processor = (args.image_encoder == 'vit_small') or (args.image_encoder == 'vit_base') or (args.image_encoder == 'vit'),
     )
 
     train_dataloader = DataLoader(

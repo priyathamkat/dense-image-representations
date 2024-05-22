@@ -99,16 +99,15 @@ if __name__ == '__main__':
         dataset_name = args.dataset,
         transform = transform,
         with_image_tokens = False, 
-        caption_return_policy = 'random',
+        caption_return_policy = 'random' if args.dataset != 'winoground' else 'all',
         return_image_sizes = True
     )
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=True,
     )
 
     segmentor = ImageSegmentor(pretrained_model_path='pretrained_checkpoints', seem_config = 'vision/seem_module/configs/seem/focall_unicl_lang_demo.yaml')
@@ -141,12 +140,12 @@ if __name__ == '__main__':
         for j in range(len(captions)):
             # Multiple images per caption (winoground case)
             if len(images) > 1:
-                image, image_size, image_id = images[j].squeeze(), image_sizes[j].squeeze(), image_ids[j].squeeze()
+                image, image_size, image_id = images[j].squeeze(), image_sizes[j].squeeze(), image_ids.squeeze()
             else:
                 image, image_size, image_id = images.squeeze(), image_sizes.squeeze(), image_ids.squeeze()
            
-            # if os.path.exists(f'{args.dataset}_visual_tokens/{image_id.item()}_{j}_edge_tokens.pt'):
-            #     continue
+            if os.path.exists(f'{args.dataset}_visual_graph/{image_id.item()}_{j}.pt'):
+                continue
             
             # parsed_caption = json.load(open(parsed_captions[j]))
             # text_graph = text_graph_constructor(parsed_caption).cpu()

@@ -283,13 +283,13 @@ def main():
 
     dataset = get_dataset(
         dataset_name = args.dataset,
-        image_tokens_root = f'{args.dataset}_visual_tokens_new',
+        image_tokens_root = f'{args.dataset}_visual_tokens',
         with_image_tokens = True, 
         caption_return_policy = 'random'
     )
     val_dataset = get_dataset(
         dataset_name = args.dataset + '_val',
-        image_tokens_root = f'{args.dataset}_val_visual_tokens_new',
+        image_tokens_root = f'{args.dataset}_val_visual_tokens',
         with_image_tokens = True, 
         caption_return_policy = 'random'
     )

@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from transformers import T5EncoderModel, ViTModel, AutoConfig
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
+from torchvision.models.vision_transformer import VisionTransformer
+
 import pdb
 
 
@@ -118,7 +120,7 @@ class VisionLanguageEncoder(nn.Module):
             )
             self.ln_final = nn.LayerNorm(transformer_width)
             self.image_projection = nn.Parameter(torch.empty(512, projection_dim))
-            self.attention_weights = nn.Parameter(torch.empty(max_attention_rank))
+            self.attention_weights = nn.Parameter(torch.randn(max_attention_rank))
             nn.init.normal_(self.image_projection, std=transformer_width**-0.5)
 
         self.text_encoder = text_encoder
@@ -193,7 +195,6 @@ class VisionLanguageEncoder(nn.Module):
         'image_embedding': batch_size x image_embedding_size
         """
 
-        tokens = tokens.clone()
         if self.pre_mlp is not None:
             tokens = self.pre_mlp(tokens)
 
@@ -237,9 +238,11 @@ class VisionLanguageEncoder(nn.Module):
 
         else:
             if self.use_attention_mask and image_attention_mask is not None:
-                # attention_weights = torch.exp(self.attention_weights)
-                # attention_weights = torch.cumsum(attention_weights, dim=0)
-                # image_attention_mask = attention_weights[image_attention_mask]
+                attention_weights = torch.exp(self.attention_weights)
+                attention_weights = torch.cumsum(attention_weights, dim=0)
+                # 0 weight to the places where image_attention_mask = 0
+                attention_weights = torch.cat([torch.Tensor([0]).cuda(), attention_weights])
+                image_attention_mask = attention_weights[image_attention_mask.long()]
 
                 image_attention_mask = image_attention_mask.repeat(self.transformer_heads, 1, 1)
                 x = self.image_transformer(x, mask=image_attention_mask)
@@ -293,10 +296,26 @@ class VisionLanguageEncoderBase(nn.Module):
         if 'vit' in image_encoder:
             if image_encoder == 'vit_pretrained':
                 self.image_transformer = ViTModel.from_pretrained('google/vit-base-patch16-224-in21k').to('cuda')
+                image_embed_dim = self.image_transformer.config.hidden_size
+            elif image_encoder == 'vit_small':
+                config = AutoConfig.from_pretrained('facebook/dino-vits16')
+                self.image_transformer = ViTModel(config)
+                image_embed_dim = self.image_transformer.config.hidden_size
+            elif image_encoder == 'vit_s':
+                self.image_transformer = VisionTransformer(
+                    image_size = 224, 
+                    patch_size = 16,
+                    num_layers = 8,
+                    num_heads = 8,
+                    hidden_dim = 512,
+                    mlp_dim = 2048,
+                )
+                image_embed_dim = 512
             else:
                 config = AutoConfig.from_pretrained('google/vit-base-patch32-224-in21k')
-                self.image_transformer = ViTModel(config).to('cuda')
-            image_embed_dim = self.image_transformer.config.hidden_size
+                self.image_transformer = ViTModel(config)
+                image_embed_dim = self.image_transformer.config.hidden_size
+            
         else:
             self.clip_model = clip_model
             image_embed_dim = 512
@@ -325,9 +344,16 @@ class VisionLanguageEncoderBase(nn.Module):
         self,
         images,
     ):
-        if self.image_encoder == "vit":
-            image_features = self.image_transformer(images).pooler_output
-            image_embeddings = image_features @ self.image_projection
+        if 'vit' in self.image_encoder:
+            if self.image_encoder == 'vit_s':
+                feats = self.image_transformer._process_input(images)
+                b_cls_token = self.image_transformer.class_token.expand(images.shape[0], -1, -1)
+                feats = torch.cat([b_cls_token, feats], dim=1)
+                image_features = self.image_transformer.encoder(feats)[:,0]
+                image_embeddings = image_features @ self.image_projection
+            else:
+                image_features = self.image_transformer(images).pooler_output
+                image_embeddings = image_features @ self.image_projection
         else:
             image_embeddings = self.clip_model.encode_image(images)
         return image_embeddings

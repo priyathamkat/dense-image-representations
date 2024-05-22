@@ -1,13 +1,15 @@
 from torch.utils.data import Dataset
 from datasets import load_dataset
 import numpy as np
-from .datautils import get_image_tokens
+from .datautils import get_image_tokens, get_return_captions
 
 class WinogroundImagesAndCaptions(Dataset):
-    def __init__(self, root, transform=None):
+    def __init__(self, root, transform=None, hf_vit_processor = False, caption_return_policy='all'):
         winoground_dataset = load_dataset('facebook/winoground', token='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', cache_dir = root, trust_remote_code = True)
         self.data = winoground_dataset['test']
         self.transform = transform
+        self.hf_vit_processor = hf_vit_processor
+        self.caption_return_policy=caption_return_policy
 
     def __len__(self):
         return len(self.data)
@@ -15,8 +17,8 @@ class WinogroundImagesAndCaptions(Dataset):
     def __getitem__(self, idx):
         sample_dict = self.data[idx]
 
-        im0 = sample_dict['image_0']
-        im1 = sample_dict['image_1']
+        im0 = sample_dict['image_0'].convert('RGB')
+        im1 = sample_dict['image_1'].convert('RGB')
 
         im0_size = np.array(im0.size)
         im1_size = np.array(im1.size)
@@ -26,7 +28,7 @@ class WinogroundImagesAndCaptions(Dataset):
         if self.transform:
             im0 = self.transform(im0)
             im1 = self.transform(im1)
-            if isinstance(im0, dict):
+            if self.hf_vit_processor:
                 im0 = im0['pixel_values'][0]
                 im1 = im1['pixel_values'][0]
 
@@ -40,11 +42,12 @@ class WinogroundImagesAndCaptions(Dataset):
 
 
 class WinogroundImageTokensAndCaptions(Dataset):
-    def __init__(self, root, image_tokens_root, transform=None):
+    def __init__(self, root, image_tokens_root, transform=None, caption_return_policy='all'):
         winoground_dataset = load_dataset('facebook/winoground', token='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', cache_dir = root, trust_remote_code = True)
         self.data = winoground_dataset['test']
         self.transform = transform
         self.image_tokens_root = image_tokens_root
+        self.caption_return_policy = caption_return_policy
 
     def __len__(self):
         return len(self.data)

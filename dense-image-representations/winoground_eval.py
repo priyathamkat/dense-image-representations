@@ -46,6 +46,7 @@ def main():
     parser.add_argument('--num_heads', type=int, default=8)
     parser.add_argument('--projection_dim', type=int, default=128)
     parser.add_argument('--preembed_nodes', action='store_true')
+    parser.add_argument('--use_attention_mask', action='store_true')
 
     parser.add_argument('--text_encoder', type=str, default='t5')
     parser.add_argument('--image_encoder', type=str, default='vit')
@@ -59,7 +60,7 @@ def main():
 
     clip_model = None
     if 'clip' in [args.image_encoder, args.text_encoder]:
-        clip_model, clip_image_processor = clip.load("ViT-B/32", device='cuda')
+        clip_model, clip_image_processor = clip.load("ViT-B/32")
         clip_model = clip_model.to(torch.float32)
 
     if 'baseline' in args.exp_name:
@@ -68,8 +69,10 @@ def main():
                                                             image_encoder=args.image_encoder,
                                                             clip_model=clip_model,)
 
-        if args.image_encoder == 'vit':
-            image_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224-in21k')
+        if 'vit_small' in args.image_encoder:
+            image_processor = ViTImageProcessor.from_pretrained('facebook/dino-vits16')
+        elif 'vit' in args.image_encoder:
+            image_processor = ViTImageProcessor.from_pretrained('google/vit-base-patch32-224-in21k')
         else:
             image_processor = clip_image_processor
 
@@ -77,7 +80,8 @@ def main():
             dataset_name = 'winoground',
             transform = image_processor,
             with_image_tokens = False, 
-            caption_return_policy = 'all'
+            caption_return_policy = 'all',
+            hf_vit_processor = 'vit' in args.image_encoder,
         )
         forward_pass_method = forward_pass_base
 
@@ -97,9 +101,20 @@ def main():
                                                         preembed_nodes='_preembed' in args.exp_name,
                                                         text_encoder=args.text_encoder,
                                                         clip_model=clip_model,
-                                                        transformer=args.transformer)
+                                                        transformer=args.transformer,
+                                                        use_attention_mask=args.use_attention_mask,
+                                                        )
 
         forward_pass_method = forward_pass
+
+    tokenizer = utils.get_tokenizer(args.text_encoder)
+
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
 
     checkpoint_dir = f'{args.result_dir}/{args.exp_name}'
     ckpts = sorted(glob.glob(f"{checkpoint_dir}/model_*"), key=os.path.getmtime, reverse=True)
@@ -114,20 +129,15 @@ def main():
             vision_language_encoder.load_state_dict(state)
             vision_language_encoder = vision_language_encoder.module
         else:
+            device = accelerator.device
+            vision_language_encoder = vision_language_encoder.to(device)
             vision_language_encoder = accelerator.prepare(vision_language_encoder)
+            loader = accelerator.prepare(loader)
             accelerator.wait_for_everyone()
             accelerator.load_state(input_dir=checkpoint_dir)
+            vision_language_encoder = vision_language_encoder.module
 
     vision_language_encoder.eval()
-
-    tokenizer = utils.get_tokenizer(args.text_encoder)
-
-    loader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-    )
 
     text_correct_count = 0
     image_correct_count = 0

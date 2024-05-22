@@ -175,3 +175,5 @@ wandb/
 run_*.sh
 results*/
 old_tokens/
+*.csv
+paper_figures/
