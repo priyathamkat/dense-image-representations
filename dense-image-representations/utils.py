@@ -41,6 +41,7 @@ def get_retrieval_score(sim_1_2, accelerator, log_name='v_t'):
     meanr = ranks.mean() + 1
     
     accelerator.log({f"{log_name}_r1": r1, f"{log_name}_r5": r5, f"{log_name}_r10": r10, f"{log_name}_r50": r50, f"{log_name}_medr": medr, f"{log_name}_meanr": meanr})
+    print({f"{log_name}_r1": r1, f"{log_name}_r5": r5, f"{log_name}_r10": r10, f"{log_name}_r50": r50, f"{log_name}_medr": medr, f"{log_name}_meanr": meanr})
 
 
 def assign_learning_rate(optimizer, new_lr):

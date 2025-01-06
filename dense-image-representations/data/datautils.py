@@ -131,6 +131,35 @@ def get_dataset(dataset_name,
                                                   caption_return_policy=caption_return_policy,
                                                   hf_vit_processor = hf_vit_processor)
 
+    elif 'imagenet' in dataset_name:
+        from .imagenet import ImageNetImagesAndCaptions, ImageNetImageTokensAndCaptions
+
+        root = '/fs/cml-datasets/ImageNet/ILSVRC2012/train' if dataset_name == 'imagenet_train' else '/fs/cml-datasets/ImageNet/ILSVRC2012/val'
+        if with_image_tokens:
+            dataset = ImageNetImageTokensAndCaptions(root_dir = root,
+                                                     class_mapping_json = '/cmlscratch/nehamk/datasets/ImageNet/meta/imagenet_class_index.json',
+                                                     image_tokens_root = image_tokens_root,
+                                                     caption_return_policy=caption_return_policy)
+        else:
+            dataset = ImageNetImagesAndCaptions(root = root,
+                                                transform = transform,
+                                                class_mapping_json = '/cmlscratch/nehamk/datasets/ImageNet/meta/imagenet_class_index.json',
+                                                caption_return_policy=caption_return_policy,
+                                                hf_vit_processor = hf_vit_processor)
+    elif dataset_name == 'flickr':
+        from .flickr import FlickrImagesAndCaptions, FlickrImageTokensAndCaptions
+        if with_image_tokens:
+            dataset = FlickrImageTokensAndCaptions(root = '/cmlscratch/nehamk/datasets/flickr/flickr30k-images',
+                                                  image_tokens_root = image_tokens_root,
+                                                  caption_file = '/cmlscratch/nehamk/datasets/flickr/results.csv',
+                                                  caption_return_policy=caption_return_policy)
+        else:
+            dataset = FlickrImagesAndCaptions(root = '/cmlscratch/nehamk/datasets/flickr/flickr30k-images',
+                                              caption_file = '/cmlscratch/nehamk/datasets/flickr/results.csv',
+                                              transform = transform,
+                                              caption_return_policy=caption_return_policy,
+                                              hf_vit_processor = hf_vit_processor)
+
     else:
         raise ValueError(f'Dataset {dataset_name} not recognized')
 

@@ -141,6 +141,13 @@ def train(
             
             accelerator.save_state(output_dir=f"{checkpoint_dir}")
             accelerator.save_model(vision_language_encoder, f"{checkpoint_dir}/model_{epoch}")
+    
+    evaluate(vision_language_encoder,
+                tokenizer,
+                val_dataloader,
+                contrastive_loss,
+                args,
+                accelerator)
 
 def evaluate(
     vision_language_encoder: VisionLanguageEncoder,

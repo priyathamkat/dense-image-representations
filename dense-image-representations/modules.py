@@ -96,6 +96,10 @@ class VisionLanguageEncoder(nn.Module):
 
         self.transformer = transformer
         self.pre_mlp = None
+        scale = transformer_width ** -0.5
+        self.class_embedding = nn.Parameter(scale * torch.randn(transformer_width))
+        self.ln_pre = nn.LayerNorm(transformer_width)
+
         if self.transformer == "clip":
             # self.pre_mlp = nn.Sequential(
             #     nn.Linear(512, 512),
@@ -142,10 +146,12 @@ class VisionLanguageEncoder(nn.Module):
 
         self.positional_embeddings = nn.ParameterDict(
             {
-                EDGES: nn.Parameter(torch.empty((transformer_width,))),
-                NODES: nn.Parameter(torch.empty((transformer_width,))),
+                IMAGE_EMBEDDING: nn.Parameter(scale * torch.randn(transformer_width)),
+                EDGES: nn.Parameter(scale * torch.randn(context_length, transformer_width)),
+                NODES: nn.Parameter(scale * torch.randn(context_length, transformer_width)),
             }
         )
+        self.positional_embedding = nn.Parameter(scale * torch.randn(context_length + 1, transformer_width))
         if not preembed_nodes:
             self.positional_embeddings[IMAGE_EMBEDDING] = nn.Parameter(
                 torch.empty((transformer_width,))
@@ -159,7 +165,7 @@ class VisionLanguageEncoder(nn.Module):
         else:
             self.image_embedder = MLP(image_embedding_size, transformer_width)
 
-        self.initialize_parameters()
+        # self.initialize_parameters()
 
     def initialize_parameters(self):
         # nn.init.normal_(self.token_embedding.weight, std=0.02)
@@ -200,36 +206,45 @@ class VisionLanguageEncoder(nn.Module):
 
         image_embedding = image_embedding.unsqueeze(1)
         max_num_nodes = max(num_nodes)
-        nodes = tokens[:, :max_num_nodes, :]
+        nodes = tokens[:, :max_num_nodes, :]   # [bs, seq_len, transformer_width]
 
-        if self.preembed_nodes:
-            nodes = self.image_embedder(
-                torch.cat(
-                    [nodes, image_embedding.repeat(1, max_num_nodes, 1)], dim=-1
-                ).permute(0, 2, 1)
-            ).permute(0, 2, 1)
-            for i, n in enumerate(num_nodes):
-                tokens[i, :n] = nodes[i, :n]
-        else:
-            image_embedding = self.image_embedder(
-                image_embedding.permute(0, 2, 1)
-            ).permute(0, 2, 1)
+        # if self.preembed_nodes:
+        #     nodes = self.image_embedder(
+        #         torch.cat(
+        #             [nodes, image_embedding.repeat(1, max_num_nodes, 1)], dim=-1
+        #         ).permute(0, 2, 1)
+        #     ).permute(0, 2, 1)
+        #     for i, n in enumerate(num_nodes):
+        #         tokens[i, :n] = nodes[i, :n]
+        # else:
+        #     image_embedding = self.image_embedder(
+        #         image_embedding.permute(0, 2, 1)
+        #     ).permute(0, 2, 1)
 
-        for i, (n, p) in enumerate(zip(num_nodes, num_non_pad_tokens)):
-            tokens[i, :n] = tokens[i, :n] + self.positional_embeddings[NODES]
-            tokens[i, n:p] = tokens[i, n:p] + self.positional_embeddings[EDGES]
+        tokens = torch.cat(
+            [self.class_embedding.to(tokens.dtype) + 
+            torch.zeros(tokens.shape[0], 1, tokens.shape[-1], dtype=tokens.dtype, device=tokens.device), tokens], 
+            dim=1)
 
-        if self.preembed_nodes:
-            x = tokens
-        else:
-            image_embedding = (
-                image_embedding + self.positional_embeddings[IMAGE_EMBEDDING]
-            )
-            x = torch.cat(
-                [image_embedding, tokens],
-                dim=1,
-            )
-            x = x[:, : self.context_length, :]
+        # for i, (n, p) in enumerate(zip(num_nodes, num_non_pad_tokens)):
+        #     tokens[i, 0] = tokens[i, 0] + self.positional_embeddings[IMAGE_EMBEDDING]
+        #     tokens[i, 1:n+1] = tokens[i, 1:n+1] + self.positional_embeddings[NODES][:n]
+        #     tokens[i, n+1:p+1] = tokens[i, n+1:p+1] + self.positional_embeddings[EDGES][:p-n]
+        tokens = tokens + self.positional_embedding
+        tokens = self.ln_pre(tokens)
+        x = tokens  # [bs, seq_len + 1, width]
+
+        # if self.preembed_nodes:
+        #     x = tokens
+        # else:
+        #     image_embedding = (
+        #         image_embedding + self.positional_embeddings[IMAGE_EMBEDDING]
+        #     )
+        #     x = torch.cat(
+        #         [image_embedding, tokens],
+        #         dim=1,
+        #     )
+        #     x = x[:, : self.context_length, :]
 
         if self.transformer == "clip":
             x = x.permute(1, 0, 2)
@@ -238,6 +253,12 @@ class VisionLanguageEncoder(nn.Module):
 
         else:
             if self.use_attention_mask and image_attention_mask is not None:
+                # update attention mask for CLS token 
+                image_attention_mask = torch.concatenate(
+                    [torch.zeros(image_attention_mask.shape[0], 1, image_attention_mask.shape[-1]).cuda(), image_attention_mask], dim = -2)
+                image_attention_mask = torch.concatenate(
+                    [torch.zeros(image_attention_mask.shape[0], image_attention_mask.shape[-2], 1).cuda(), image_attention_mask], dim = -1)
+
                 attention_weights = torch.exp(self.attention_weights)
                 attention_weights = torch.cumsum(attention_weights, dim=0)
                 # 0 weight to the places where image_attention_mask = 0
@@ -249,7 +270,7 @@ class VisionLanguageEncoder(nn.Module):
             else:
                 x = self.image_transformer(x)
 
-        x = self.ln_final(x)
+        x = self.ln_final(x[:, 0, :])
         image_embeddings = x @ self.image_projection
         return image_embeddings
 
